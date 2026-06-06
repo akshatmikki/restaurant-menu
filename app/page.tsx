@@ -1,65 +1,63 @@
-import Image from "next/image";
+"use client";
 
-export default function Home() {
+import Link from "next/link";
+import { bookings } from "./lib/data";
+
+export default function LandingPage() {
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <div className="min-h-screen bg-navy flex flex-col items-center justify-center p-6 gap-16">
+
+      <div className="text-center space-y-4">
+        <div className="relative mx-auto w-24 h-24 flex items-center justify-center">
+          <div className="absolute inset-0 rounded-full border border-gold/50" />
+          <div className="absolute inset-2 rounded-full border border-gold/25" />
+          <span className="font-display text-gold text-4xl font-light select-none">F</span>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+        <div>
+          <p className="font-display text-cream/55 tracking-[0.5em] text-xs">MACHYNYS · MONKS ISLAND</p>
+          <h1 className="font-display text-cream tracking-[0.35em] text-3xl mt-2 font-light">LOUNGE MENU</h1>
         </div>
-      </main>
+        <div className="flex items-center gap-3 justify-center">
+          <div className="h-px bg-gold/45 w-24" />
+          <div className="w-1 h-1 bg-gold/60 rotate-45" />
+          <div className="h-px bg-gold/45 w-24" />
+        </div>
+        <p className="font-serif italic text-cream/60 text-base max-w-xs mx-auto">
+          Select your table booking below to begin your ordering experience
+        </p>
+      </div>
+
+      <div className="w-full max-w-sm space-y-3">
+        {bookings.map((b) => {
+          const guestName = [b.guest.first_name, b.guest.last_name].filter(Boolean).join(" ");
+          return (
+            <Link
+              key={b.id}
+              href={`/menu?id=${b.id}`}
+              className="
+                flex items-center justify-between px-5 py-4
+                border border-gold/25 hover:border-gold/70
+                bg-navy-light hover:bg-navy-border/50
+                transition-all duration-200 group
+              "
+            >
+              <div>
+                <p className="font-serif text-cream text-base group-hover:text-gold transition-colors font-medium">
+                  {guestName}
+                </p>
+                <p className="text-cream/60 text-sm font-serif mt-0.5">
+                  {b.booking_ref} · {b.party_size} {b.party_size === 1 ? "Guest" : "Guests"} · {b.service.name}
+                </p>
+              </div>
+              <span className="text-gold/45 group-hover:text-gold/80 transition-colors font-serif text-lg">›</span>
+            </Link>
+          );
+        })}
+      </div>
+
+      <p className="text-cream/45 text-sm font-serif text-center max-w-xs">
+        In production, your booking link is sent automatically via SMS.
+      </p>
     </div>
   );
 }
