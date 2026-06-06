@@ -1,8 +1,8 @@
 "use client";
 
 import { useState, useMemo } from "react";
-import Link from "next/link";
-import type { Booking, MenuCategory, MenuItem, MenuItemType } from "../lib/data";
+import type { Booking, MenuCategory, MenuItem, MenuItemType } from "../lib/types";
+import { MENU_NAME } from "../lib/types";
 
 interface Props {
   booking: Booking;
@@ -84,20 +84,16 @@ export default function MenuClient({ booking, menuCategories }: Props) {
     return (
       <div className="min-h-screen bg-navy flex flex-col items-center justify-center p-6">
         <div className="w-full max-w-md">
-          <Link
-            href="/"
-            className="inline-block text-gold/60 hover:text-gold text-xs font-display tracking-widest mb-8 transition-colors"
-          >
-            ← All Bookings
-          </Link>
 
           <div className="text-center mb-10">
             <div className="relative mx-auto w-16 h-16 flex items-center justify-center mb-4">
               <div className="absolute inset-0 rounded-full border border-gold/50" />
               <div className="absolute inset-1.5 rounded-full border border-gold/30" />
-              <span className="font-display text-gold text-2xl font-light select-none">F</span>
+              <span className="font-display text-gold text-2xl font-light select-none">G</span>
             </div>
-            <h1 className="font-display text-cream tracking-[0.3em] text-2xl font-light">LOUNGE MENU</h1>
+            <h1 className="font-display text-cream tracking-[0.3em] text-2xl font-light">
+              {MENU_NAME.toUpperCase()}
+            </h1>
             <div className="flex items-center gap-3 justify-center mt-3">
               <div className="h-px bg-gold/40 w-16" />
               <div className="w-1 h-1 bg-gold/60 rotate-45" />
@@ -112,7 +108,8 @@ export default function MenuClient({ booking, menuCategories }: Props) {
               </p>
               <p className="font-display text-cream text-2xl tracking-wide">{guestLabel || "Guest"}</p>
               <p className="text-cream/70 font-serif text-base mt-1">
-                Party of {guestCount} · {booking.service.name}
+                Party of {guestCount}
+                {booking.service.name ? ` · ${booking.service.name}` : ""}
               </p>
               <p className="text-cream/55 font-serif text-sm mt-0.5">
                 {formatDate(booking.booking_date)} at {booking.booking_time}
@@ -200,12 +197,12 @@ export default function MenuClient({ booking, menuCategories }: Props) {
                 ← Edit Names
               </button>
             )}
-            <p className="text-cream font-serif text-base font-medium truncate">
+            <p className="font-display text-cream text-lg tracking-wide mt-0.5 truncate">
               {guestLabel || "Guest"}
-              <span className="text-gold/70 ml-1.5 text-sm">· {booking.booking_ref}</span>
+              <span className="text-gold/70 ml-2 text-sm font-serif font-normal">· {booking.booking_ref}</span>
             </p>
             <p className="text-cream/60 font-serif text-sm">
-              {booking.service.name}
+              {booking.service.name || MENU_NAME}
               {booking.tables.length > 0 && ` · Table ${booking.tables[0].name}`}
               {" · "}{booking.booking_time}
             </p>
@@ -232,9 +229,11 @@ export default function MenuClient({ booking, menuCategories }: Props) {
         <div className="relative mx-auto w-14 h-14 flex items-center justify-center mb-4">
           <div className="absolute inset-0 rounded-full border border-gold/40" />
           <div className="absolute inset-1.5 rounded-full border border-gold/20" />
-          <span className="font-display text-gold text-xl font-light select-none">F</span>
+          <span className="font-display text-gold text-xl font-light select-none">G</span>
         </div>
-        <h2 className="font-display text-cream tracking-[0.35em] text-2xl font-light">LOUNGE MENU</h2>
+        <h2 className="font-display text-cream tracking-[0.35em] text-2xl font-light">
+          {MENU_NAME.toUpperCase()}
+        </h2>
         <div className="flex items-center gap-3 justify-center mt-3">
           <div className="h-px bg-gold/45 w-20" />
           <div className="w-1 h-1 bg-gold/65 rotate-45" />
@@ -274,11 +273,6 @@ export default function MenuClient({ booking, menuCategories }: Props) {
             If you have any dietary requirements, please advise your server. We cannot 100% guarantee
             that any dish is allergen free.
           </p>
-          <div className="flex items-center gap-3 justify-center pt-2">
-            <div className="h-px bg-gold/25 w-12" />
-            <p className="font-display text-cream/40 tracking-[0.3em] text-xs">MACHYNYS · MONKS ISLAND</p>
-            <div className="h-px bg-gold/25 w-12" />
-          </div>
         </div>
       </main>
 

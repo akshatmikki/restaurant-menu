@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
-import { findBooking, menuCategories } from "../lib/data";
+import { findBooking } from "../lib/data";
+import { menuCategories } from "../lib/types";
 import MenuClient from "./MenuClient";
 
 export default async function MenuPage({
@@ -11,7 +12,8 @@ export default async function MenuPage({
 
   if (!id) redirect("/");
 
-  const booking = findBooking(id);
+  const booking = await findBooking(id);
+
   if (!booking) redirect("/");
 
   return <MenuClient booking={booking} menuCategories={menuCategories} />;
