@@ -9,6 +9,13 @@ interface Props {
   menuCategories: MenuCategory[];
 }
 
+interface GuestInfo {
+  name: string;
+  email: string;
+  phone: string;
+  showExtra: boolean;
+}
+
 const TYPE_STYLES: Record<MenuItemType, { label: string; cls: string }> = {
   Veg:       { label: "Veg",     cls: "text-emerald-400 border-emerald-400/50" },
   Vegan:     { label: "Vegan",   cls: "text-teal-300 border-teal-300/50" },
@@ -29,23 +36,41 @@ function formatDate(dateStr: string) {
 export default function MenuClient({ booking, menuCategories }: Props) {
   const guestCount = booking.party_size;
   const [phase, setPhase] = useState<"names" | "menu">("names");
-  const [guestNames, setGuestNames] = useState<string[]>(() => {
-    const names = Array(guestCount).fill("") as string[];
-    names[0] = [booking.guest.first_name, booking.guest.last_name].filter(Boolean).join(" ");
-    return names;
-  });
+
+  const [guestInfos, setGuestInfos] = useState<GuestInfo[]>(() =>
+    Array.from({ length: guestCount }, (_, i) => ({
+      name:
+        i === 0
+          ? [booking.guest.first_name, booking.guest.last_name].filter(Boolean).join(" ")
+          : "",
+      email: "",
+      phone: "",
+      showExtra: false,
+    })),
+  );
+
   const [order, setOrder] = useState<OrderState>({});
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [saved, setSaved] = useState(false);
 
   const resolvedNames = useMemo(
-    () => guestNames.map((n, i) => n.trim() || `Guest ${i + 1}`),
-    [guestNames],
+    () => guestInfos.map((g, i) => g.name.trim() || `Guest ${i + 1}`),
+    [guestInfos],
   );
 
   const guestLabel = [booking.guest.first_name, booking.guest.last_name]
     .filter(Boolean)
     .join(" ");
+
+  const canProceed = guestInfos.every((g) => g.name.trim().length > 0);
+
+  function updateGuest(i: number, field: keyof Omit<GuestInfo, "showExtra">, value: string) {
+    setGuestInfos((prev) => prev.map((g, j) => (j === i ? { ...g, [field]: value } : g)));
+  }
+
+  function toggleExtra(i: number) {
+    setGuestInfos((prev) => prev.map((g, j) => (j === i ? { ...g, showExtra: !g.showExtra } : g)));
+  }
 
   function toggleGuestItem(itemId: string, guestNum: number) {
     if (saved) return;
@@ -111,10 +136,13 @@ export default function MenuClient({ booking, menuCategories }: Props) {
                 Party of {guestCount}
                 {booking.service.name ? ` · ${booking.service.name}` : ""}
               </p>
-              <p className="text-cream/55 font-serif text-sm mt-0.5">
-                {formatDate(booking.booking_date)} at {booking.booking_time}
-                {booking.tables.length > 0 && ` · Table ${booking.tables[0].name}`}
-              </p>
+              {booking.booking_date && (
+                <p className="text-cream/55 font-serif text-sm mt-0.5">
+                  {formatDate(booking.booking_date)}
+                  {booking.booking_time && ` at ${booking.booking_time}`}
+                  {booking.tables.length > 0 && ` · Table ${booking.tables[0].name}`}
+                </p>
+              )}
             </div>
 
             <div className="h-px bg-gold/25 mb-5" />
@@ -123,31 +151,74 @@ export default function MenuClient({ booking, menuCategories }: Props) {
               Please enter the names of each guest so we can personalise your order
             </p>
 
-            <div className="space-y-5">
+            <div className="space-y-6">
               {Array.from({ length: guestCount }, (_, i) => (
-                <div key={i} className="flex items-center gap-4">
-                  <div className="shrink-0 w-8 h-8 rounded-full border border-gold/50 flex items-center justify-center">
-                    <span className="font-display text-gold/80 text-xs">{i + 1}</span>
+                <div key={i} className="space-y-3">
+                  {/* Name row */}
+                  <div className="flex items-center gap-3">
+                    <div className="shrink-0 w-8 h-8 rounded-full border border-gold/50 flex items-center justify-center">
+                      <span className="font-display text-gold/80 text-xs">{i + 1}</span>
+                    </div>
+                    <div className="flex-1">
+                      <input
+                        type="text"
+                        value={guestInfos[i].name}
+                        onChange={(e) => updateGuest(i, "name", e.target.value)}
+                        placeholder="Guest name *"
+                        maxLength={40}
+                        className="
+                          w-full bg-transparent border-b border-gold/35
+                          text-cream placeholder:text-cream/40 py-2 font-serif text-base
+                          focus:outline-none focus:border-gold/80 transition-colors duration-200
+                        "
+                      />
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleExtra(i)}
+                      title={guestInfos[i].showExtra ? "Hide details" : "Add email & phone"}
+                      className={`
+                        shrink-0 w-7 h-7 rounded-full border flex items-center justify-center
+                        font-display text-base leading-none transition-all duration-200
+                        ${guestInfos[i].showExtra
+                          ? "border-gold text-gold bg-gold/15 scale-110"
+                          : "border-gold/40 text-gold/60 hover:border-gold/70 hover:text-gold"
+                        }
+                      `}
+                    >
+                      {guestInfos[i].showExtra ? "×" : "+"}
+                    </button>
                   </div>
-                  <div className="flex-1">
-                    <input
-                      type="text"
-                      value={guestNames[i]}
-                      onChange={(e) =>
-                        setGuestNames((prev) =>
-                          prev.map((n, j) => (j === i ? e.target.value : n)),
-                        )
-                      }
-                      placeholder={`Guest ${i + 1}`}
-                      maxLength={40}
-                      className="
-                        w-full bg-transparent border-b border-gold/35
-                        text-cream placeholder:text-cream/40 py-2 font-serif text-base
-                        focus:outline-none focus:border-gold/80
-                        transition-colors duration-200
-                      "
-                    />
-                  </div>
+
+                  {/* Expanded: email + phone */}
+                  {guestInfos[i].showExtra && (
+                    <div className="ml-11 space-y-3">
+                      <input
+                        type="email"
+                        value={guestInfos[i].email}
+                        onChange={(e) => updateGuest(i, "email", e.target.value)}
+                        placeholder="Email address"
+                        maxLength={80}
+                        className="
+                          w-full bg-transparent border-b border-gold/25
+                          text-cream placeholder:text-cream/35 py-1.5 font-serif text-sm
+                          focus:outline-none focus:border-gold/60 transition-colors duration-200
+                        "
+                      />
+                      <input
+                        type="tel"
+                        value={guestInfos[i].phone}
+                        onChange={(e) => updateGuest(i, "phone", e.target.value)}
+                        placeholder="Phone number"
+                        maxLength={20}
+                        className="
+                          w-full bg-transparent border-b border-gold/25
+                          text-cream placeholder:text-cream/35 py-1.5 font-serif text-sm
+                          focus:outline-none focus:border-gold/60 transition-colors duration-200
+                        "
+                      />
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
@@ -156,16 +227,18 @@ export default function MenuClient({ booking, menuCategories }: Props) {
           <button
             type="button"
             onClick={() => setPhase("menu")}
+            disabled={!canProceed}
             className="
               w-full bg-gold text-navy font-display tracking-[0.3em]
               text-sm py-4 hover:bg-gold-light transition-colors duration-200 font-medium
+              disabled:opacity-40 disabled:cursor-not-allowed
             "
           >
             PROCEED TO MENU
           </button>
 
-          <p className="text-center text-cream/50 text-sm font-serif mt-4 italic">
-            Names are optional — leave blank to continue as Guest 1, 2…
+          <p className="text-center text-cream/45 text-sm font-serif mt-4 italic">
+            * Name required · tap + to add email & phone
           </p>
         </div>
       </div>
@@ -204,7 +277,7 @@ export default function MenuClient({ booking, menuCategories }: Props) {
             <p className="text-cream/60 font-serif text-sm">
               {booking.service.name || MENU_NAME}
               {booking.tables.length > 0 && ` · Table ${booking.tables[0].name}`}
-              {" · "}{booking.booking_time}
+              {booking.booking_time && ` · ${booking.booking_time}`}
             </p>
           </div>
           <div className="text-right shrink-0">
