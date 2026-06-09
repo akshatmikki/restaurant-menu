@@ -48,6 +48,7 @@ export interface Booking {
   booking_date: string;
   booking_time: string;
   status: string;
+  menu_id: number | null;
   guest: Guest;
   service: ServiceInfo;
   tables: TableInfo[];
@@ -55,61 +56,32 @@ export interface Booking {
 
 export const MENU_NAME = "Grofers Sunday";
 
-export const menuCategories: MenuCategory[] = [
-  {
-    id: 1,
-    name: "Main Course",
-    items: [
-      {
-        id: 1,
-        name: "Turkey Dinner",
-        description: "Roasted turkey with seasonal vegetables and gravy",
-        price: "28.00",
-        currency: "USD",
-        allergens: ["Gluten"],
-        type: "Non-Veg",
-        category: { id: 1, name: "Main Course" },
-        is_active: true,
-      },
-      {
-        id: 2,
-        name: "Vegan Polenta",
-        description: "Creamy polenta with roasted vegetables and herbs",
-        price: "22.00",
-        currency: "USD",
-        allergens: [],
-        type: "Vegan",
-        category: { id: 1, name: "Main Course" },
-        is_active: true,
-      },
-    ],
-  },
-  {
-    id: 2,
-    name: "Desserts",
-    items: [
-      {
-        id: 3,
-        name: "Cheesecake",
-        description: "New York style cheesecake with berry compote",
-        price: "9.00",
-        currency: "USD",
-        allergens: ["Dairy", "Gluten", "Eggs"],
-        type: "Veg",
-        category: { id: 2, name: "Desserts" },
-        is_active: true,
-      },
-      {
-        id: 4,
-        name: "Crème Brûlée",
-        description: "Classic French custard with caramelised sugar crust",
-        price: "9.00",
-        currency: "USD",
-        allergens: ["Dairy", "Eggs"],
-        type: "Veg",
-        category: { id: 2, name: "Desserts" },
-        is_active: true,
-      },
-    ],
-  },
-];
+export interface OrderDetailItem {
+  menuItemId: number;
+  itemName: string;
+  itemCategory: string | null;
+  itemType: string;
+  itemPrice: number;
+  itemCurrency: string;
+  itemDescription: string | null;
+}
+
+export interface OrderDetailGuest {
+  guestNumber: number;
+  guestName: string;
+  guestEmail: string | null;
+  guestPhone: string | null;
+  items: OrderDetailItem[];
+}
+
+export interface ExistingOrder {
+  orderId: number;
+  confirmedAt: string;
+  bookingRef: string;
+  bookingDate: string;
+  bookingTime: string;
+  partySize: number;
+  menuName: string | null;
+  primaryGuestName: string | null;
+  guests: OrderDetailGuest[];
+}

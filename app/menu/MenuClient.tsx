@@ -1,12 +1,14 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import type { Booking, MenuCategory, MenuItem, MenuItemType } from "../lib/types";
-import { MENU_NAME } from "../lib/types";
+import { useState } from "react";
+import type { Booking, MenuCategory, MenuItem, MenuItemType, ExistingOrder } from "../lib/types";
+import { submitOrder } from "../lib/actions";
 
 interface Props {
   booking: Booking;
   menuCategories: MenuCategory[];
+  menuName: string | null;
+  existingOrder: ExistingOrder | null;
 }
 
 interface GuestInfo {
@@ -33,8 +35,10 @@ function formatDate(dateStr: string) {
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export default function MenuClient({ booking, menuCategories }: Props) {
+export default function MenuClient({ booking, menuCategories, menuName, existingOrder }: Props) {
+  const MENU_NAME = menuName ?? "Menu";
   const guestCount = booking.party_size;
+
   const [phase, setPhase] = useState<"names" | "menu">("names");
 
   const [guestInfos, setGuestInfos] = useState<GuestInfo[]>(() =>
@@ -52,11 +56,33 @@ export default function MenuClient({ booking, menuCategories }: Props) {
   const [order, setOrder] = useState<OrderState>({});
   const [summaryOpen, setSummaryOpen] = useState(false);
   const [saved, setSaved] = useState(false);
+  const [orderId, setOrderId] = useState<number | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
 
-  const resolvedNames = useMemo(
-    () => guestInfos.map((g, i) => g.name.trim() || `Guest ${i + 1}`),
-    [guestInfos],
-  );
+  async function handleConfirm() {
+    setSubmitting(true);
+    setSubmitError(null);
+    try {
+      const items = guestSummaries.flatMap(({ guestNum, name, items }) =>
+        items.map((item) => ({
+          menuItemId: item.id,
+          guestNumber: guestNum,
+          guestName: name,
+        })),
+      );
+      const result = await submitOrder(booking.id, guestInfos, items);
+      setOrderId(result.orderId);
+      setSaved(true);
+      setSummaryOpen(false);
+    } catch {
+      setSubmitError("Failed to confirm order. Please try again.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  const resolvedNames = guestInfos.map((g, i) => g.name.trim() || `Guest ${i + 1}`);
 
   const guestLabel = [booking.guest.first_name, booking.guest.last_name]
     .filter(Boolean)
@@ -86,22 +112,112 @@ export default function MenuClient({ booking, menuCategories }: Props) {
     });
   }
 
-  const allItems = useMemo(() => menuCategories.flatMap((c) => c.items), [menuCategories]);
+  const allItems = menuCategories.flatMap((c) => c.items);
 
-  const guestSummaries = useMemo(() => {
-    return resolvedNames.map((name, idx) => {
-      const guestNum = idx + 1;
-      const items: MenuItem[] = [];
-      for (const item of allItems) {
-        if ((order[String(item.id)] ?? []).includes(guestNum)) items.push(item);
-      }
-      const total = items.reduce((s, i) => s + parseFloat(i.price), 0);
-      return { guestNum, name, items, total };
-    });
-  }, [order, resolvedNames, allItems]);
+  const guestSummaries = resolvedNames.map((name, idx) => {
+    const guestNum = idx + 1;
+    const items: MenuItem[] = [];
+    for (const item of allItems) {
+      if ((order[String(item.id)] ?? []).includes(guestNum)) items.push(item);
+    }
+    const total = items.reduce((s, i) => s + parseFloat(i.price), 0);
+    return { guestNum, name, items, total };
+  });
 
   const tableTotal = guestSummaries.reduce((s, g) => s + g.total, 0);
   const hasAnySelection = Object.values(order).some((g) => g.length > 0);
+
+  // ─── Existing confirmed order ─────────────────────────────────────────────
+
+  if (existingOrder) {
+    const existingTotal = existingOrder.guests.reduce(
+      (sum, g) => sum + g.items.reduce((s, i) => s + i.itemPrice, 0),
+      0,
+    );
+    const existingGuestLabel = existingOrder.primaryGuestName ?? booking.guest.first_name;
+    const currency = existingOrder.guests[0]?.items[0]?.itemCurrency;
+    const sym = currency === "GBP" ? "£" : "$";
+
+    return (
+      <div className="min-h-screen bg-navy text-cream">
+        <div className="sticky top-0 z-40 bg-emerald-800/95 border-b border-emerald-400/50 text-center py-3 px-4">
+          <p className="font-display tracking-[0.25em] text-emerald-200 text-sm">
+            ORDER CONFIRMED · #{existingOrder.orderId}
+          </p>
+        </div>
+
+        <div className="text-center pt-10 pb-6 px-4">
+          <div className="relative mx-auto w-14 h-14 flex items-center justify-center mb-4">
+            <div className="absolute inset-0 rounded-full border border-gold/40" />
+            <div className="absolute inset-1.5 rounded-full border border-gold/20" />
+            <span className="font-display text-gold text-xl font-light select-none">G</span>
+          </div>
+          <h2 className="font-display text-cream tracking-[0.35em] text-2xl font-light">
+            {MENU_NAME.toUpperCase()}
+          </h2>
+          <div className="flex items-center gap-3 justify-center mt-3">
+            <div className="h-px bg-gold/45 w-20" />
+            <div className="w-1 h-1 bg-gold/65 rotate-45" />
+            <div className="h-px bg-gold/45 w-20" />
+          </div>
+        </div>
+
+        <div className="max-w-2xl mx-auto px-4 pb-16">
+          <div className="border border-gold/30 bg-navy-light/70 p-6 mb-6 text-center">
+            <p className="text-gold/80 font-serif text-xs tracking-widest uppercase mb-1">
+              {existingOrder.bookingRef}
+            </p>
+            <p className="font-display text-cream text-2xl tracking-wide">{existingGuestLabel || "Guest"}</p>
+            <p className="text-cream/70 font-serif text-base mt-1">Party of {existingOrder.partySize}</p>
+            {existingOrder.bookingDate && (
+              <p className="text-cream/55 font-serif text-sm mt-0.5">
+                {formatDate(existingOrder.bookingDate)}
+                {existingOrder.bookingTime && ` at ${existingOrder.bookingTime}`}
+              </p>
+            )}
+          </div>
+
+          {existingOrder.guests.map((guest) => {
+            const subtotal = guest.items.reduce((s, i) => s + i.itemPrice, 0);
+            const guestSym = guest.items[0]?.itemCurrency === "GBP" ? "£" : "$";
+            return (
+              <div key={guest.guestNumber} className="mb-6 border border-gold/20 p-5">
+                <p className="font-display tracking-[0.2em] text-gold text-xs mb-4 uppercase">
+                  {guest.guestName}
+                </p>
+                {guest.items.map((item) => (
+                  <div key={item.menuItemId} className="flex justify-between items-baseline text-base font-serif py-1 border-b border-gold/10 last:border-0">
+                    <div className="min-w-0 mr-4">
+                      <span className="italic text-cream/85">{item.itemName}</span>
+                      {item.itemCategory && (
+                        <span className="text-cream/40 text-sm ml-2">· {item.itemCategory}</span>
+                      )}
+                    </div>
+                    <span className="text-gold/80 shrink-0">
+                      {item.itemCurrency === "GBP" ? "£" : "$"}{item.itemPrice.toFixed(2)}
+                    </span>
+                  </div>
+                ))}
+                <div className="flex justify-between text-sm font-serif pt-3 mt-1">
+                  <span className="text-cream/60 italic">Subtotal</span>
+                  <span className="text-gold">{guestSym}{subtotal.toFixed(2)}</span>
+                </div>
+              </div>
+            );
+          })}
+
+          <div className="border border-gold/30 p-5 flex justify-between items-center">
+            <span className="font-display tracking-[0.2em] text-cream text-sm">TABLE TOTAL</span>
+            <span className="font-display text-gold text-xl">{sym}{existingTotal.toFixed(2)}</span>
+          </div>
+
+          <p className="text-center text-cream/45 font-serif italic text-sm mt-8">
+            Your order has been confirmed and cannot be edited.
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   // ─── Phase: Guest name entry ──────────────────────────────────────────────
 
@@ -152,7 +268,7 @@ export default function MenuClient({ booking, menuCategories }: Props) {
             </p>
 
             <div className="space-y-6">
-              {Array.from({ length: guestCount }, (_, i) => (
+              {guestInfos.map((guestInfo, i) => (
                 <div key={i} className="space-y-3">
                   {/* Name row */}
                   <div className="flex items-center gap-3">
@@ -162,7 +278,7 @@ export default function MenuClient({ booking, menuCategories }: Props) {
                     <div className="flex-1">
                       <input
                         type="text"
-                        value={guestInfos[i].name}
+                        value={guestInfo.name}
                         onChange={(e) => updateGuest(i, "name", e.target.value)}
                         placeholder="Guest name *"
                         maxLength={40}
@@ -176,26 +292,26 @@ export default function MenuClient({ booking, menuCategories }: Props) {
                     <button
                       type="button"
                       onClick={() => toggleExtra(i)}
-                      title={guestInfos[i].showExtra ? "Hide details" : "Add email & phone"}
+                      title={guestInfo.showExtra ? "Hide details" : "Add email & phone"}
                       className={`
                         shrink-0 w-7 h-7 rounded-full border flex items-center justify-center
                         font-display text-base leading-none transition-all duration-200
-                        ${guestInfos[i].showExtra
+                        ${guestInfo.showExtra
                           ? "border-gold text-gold bg-gold/15 scale-110"
                           : "border-gold/40 text-gold/60 hover:border-gold/70 hover:text-gold"
                         }
                       `}
                     >
-                      {guestInfos[i].showExtra ? "×" : "+"}
+                      {guestInfo.showExtra ? "×" : "+"}
                     </button>
                   </div>
 
                   {/* Expanded: email + phone */}
-                  {guestInfos[i].showExtra && (
+                  {guestInfo.showExtra && (
                     <div className="ml-11 space-y-3">
                       <input
                         type="email"
-                        value={guestInfos[i].email}
+                        value={guestInfo.email}
                         onChange={(e) => updateGuest(i, "email", e.target.value)}
                         placeholder="Email address"
                         maxLength={80}
@@ -207,7 +323,7 @@ export default function MenuClient({ booking, menuCategories }: Props) {
                       />
                       <input
                         type="tel"
-                        value={guestInfos[i].phone}
+                        value={guestInfo.phone}
                         onChange={(e) => updateGuest(i, "phone", e.target.value)}
                         placeholder="Phone number"
                         maxLength={20}
@@ -253,7 +369,7 @@ export default function MenuClient({ booking, menuCategories }: Props) {
       {saved && (
         <div className="sticky top-0 z-40 bg-emerald-800/95 border-b border-emerald-400/50 text-center py-3 px-4">
           <p className="font-display tracking-[0.25em] text-emerald-200 text-sm">
-            ORDER CONFIRMED — No further changes can be made
+            ORDER CONFIRMED{orderId ? ` · #${orderId}` : ""} — No further changes can be made
           </p>
         </div>
       )}
@@ -395,15 +511,20 @@ export default function MenuClient({ booking, menuCategories }: Props) {
 
               {!saved && (
                 <div className="pt-2 pb-2">
+                  {submitError && (
+                    <p className="text-center text-rose-400 text-sm font-serif mb-3">{submitError}</p>
+                  )}
                   <button
                     type="button"
-                    onClick={() => { setSaved(true); setSummaryOpen(false); }}
+                    onClick={handleConfirm}
+                    disabled={submitting}
                     className="
                       w-full bg-gold text-navy font-display tracking-[0.3em]
                       text-sm py-3.5 hover:bg-gold-light transition-colors duration-200 font-medium
+                      disabled:opacity-50 disabled:cursor-not-allowed
                     "
                   >
-                    CONFIRM ORDER
+                    {submitting ? "CONFIRMING…" : "CONFIRM ORDER"}
                   </button>
                   <p className="text-center text-cream/50 text-sm font-serif mt-2 italic">
                     Once confirmed, the order cannot be edited
