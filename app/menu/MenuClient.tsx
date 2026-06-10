@@ -16,6 +16,7 @@ import {
   loadMyMenuSelection,
   loadPartySelections,
   confirmPartyOrder,
+  lookupGuestRegistration,
 } from "../lib/actions";
 
 interface Props {
@@ -100,9 +101,10 @@ export default function MenuClient({
   const [myReg, setMyReg] = useState<MyReg | null>(null);
   const [regCount, setRegCount] = useState(registrationCount);
 
-  // Registration form
-  const [regName, setRegName] = useState("");
-  const [regPhone, setRegPhone] = useState("");
+  // Registration form — pre-filled with host data from the booking
+  const hostName = [booking.guest.first_name, booking.guest.last_name].filter(Boolean).join(" ");
+  const [regName, setRegName] = useState(hostName);
+  const [regPhone, setRegPhone] = useState(booking.guest.phone ?? "");
   const [regEmail, setRegEmail] = useState("");
   const [regSubmitting, setRegSubmitting] = useState(false);
   const [regError, setRegError] = useState<string | null>(null);
@@ -162,8 +164,21 @@ export default function MenuClient({
       );
       if (!result.success) {
         if (result.error === "party_full") setPhase("party_full");
-        else if (result.error === "already_registered") setRegError("This phone number is already registered for this booking.");
-        else setRegError("Something went wrong. Please try again.");
+        else if (result.error === "already_registered") {
+          // Phone already registered (e.g. host switching devices) — restore session
+          const existing = await lookupGuestRegistration(booking.id, regPhone);
+          if (existing) {
+            const reg: MyReg = { id: existing.id, name: existing.name, isOwner: existing.isOwner };
+            localStorage.setItem(LS_KEY, JSON.stringify(reg));
+            setMyReg(reg);
+            const itemIds = await loadMyMenuSelection(reg.id);
+            setMySelection(new Set(itemIds));
+            setSelectionSaved(itemIds.length > 0);
+            setPhase("my_menu");
+          } else {
+            setRegError("This phone number is already registered for this booking.");
+          }
+        } else setRegError("Something went wrong. Please try again.");
         return;
       }
       const reg: MyReg = { id: result.registrationId, name: regName.trim(), isOwner: result.isOwner };
@@ -388,13 +403,6 @@ export default function MenuClient({
 
           <div className="h-px bg-gold/25 mb-4" />
 
-          <div className="flex gap-1 justify-center mb-4">
-            {Array.from({ length: guestCount }).map((_, i) => (
-              <div key={i} className={`h-1.5 flex-1 max-w-8 rounded-full ${i < regCount ? "bg-gold" : "bg-gold/20"}`} />
-            ))}
-          </div>
-          <p className="text-center text-cream/55 font-serif text-sm mb-5">{regCount} of {guestCount} guests registered</p>
-
           <p className="text-center font-serif italic text-cream/65 text-base mb-5 leading-relaxed">
             Register to select your menu choices
           </p>
@@ -588,6 +596,17 @@ export default function MenuClient({
           </div>
         </div>
       </header>
+
+      {myReg?.isOwner && (
+        <div className="px-4 pt-4 pb-2">
+          <div className="flex gap-1 justify-center mb-2">
+            {Array.from({ length: guestCount }).map((_, i) => (
+              <div key={i} className={`h-1.5 flex-1 max-w-8 rounded-full ${i < regCount ? "bg-gold" : "bg-gold/20"}`} />
+            ))}
+          </div>
+          <p className="text-center text-cream/55 font-serif text-sm">{regCount} of {guestCount} guests registered</p>
+        </div>
+      )}
 
       <div className="text-center pt-10 pb-6 px-4">
         <Logo small />

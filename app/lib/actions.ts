@@ -71,6 +71,24 @@ export async function registerGuest(
   }
 }
 
+export async function lookupGuestRegistration(
+  bookingId: number,
+  phone: string,
+): Promise<{ id: number; name: string; isOwner: boolean } | null> {
+  const normalized = phone.replace(/[^\d+]/g, '');
+  if (!normalized) return null;
+  try {
+    const { rows } = await pool.query<{ id: number; name: string; is_owner: boolean }>(
+      `SELECT id, name, is_owner FROM booking_registrations WHERE booking_id = $1 AND phone = $2 LIMIT 1`,
+      [bookingId, normalized],
+    );
+    if (!rows[0]) return null;
+    return { id: rows[0].id, name: rows[0].name, isOwner: rows[0].is_owner };
+  } catch {
+    return null;
+  }
+}
+
 interface GuestInput {
   name: string;
   email: string;
