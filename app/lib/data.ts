@@ -1,5 +1,5 @@
 import pool from "./db";
-import type { Booking, MenuCategory, MenuItemType, ExistingOrder, OrderDetailGuest } from "./types";
+import type { Booking, MenuCategory, MenuItemType, ExistingOrder, OrderDetailGuest, GuestRegistration } from "./types";
 
 function normalizeType(raw: string): MenuItemType {
   const s = raw.trim().toLowerCase();
@@ -183,6 +183,27 @@ export async function getExistingOrder(bookingId: number): Promise<ExistingOrder
     primaryGuestName: first.primary_guest_name,
     guests: Array.from(guestMap.values()),
   };
+}
+
+export async function getBookingRegistrations(bookingId: number): Promise<{
+  registrations: GuestRegistration[];
+  count: number;
+}> {
+  try {
+    const { rows } = await pool.query<{ id: number; name: string; is_owner: boolean }>(
+      `SELECT id, name, is_owner
+       FROM booking_registrations
+       WHERE booking_id = $1
+       ORDER BY registered_at ASC`,
+      [bookingId],
+    );
+    return {
+      registrations: rows.map((r) => ({ id: r.id, name: r.name, isOwner: r.is_owner })),
+      count: rows.length,
+    };
+  } catch {
+    return { registrations: [], count: 0 };
+  }
 }
 
 function mapBookingRow(row: Record<string, unknown>): Booking {

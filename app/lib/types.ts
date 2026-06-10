@@ -85,3 +85,16 @@ export interface ExistingOrder {
   primaryGuestName: string | null;
   guests: OrderDetailGuest[];
 }
+
+export interface GuestRegistration {
+  id: number;
+  name: string;
+  isOwner: boolean;
+}
+
+export interface PartyGuestSelection {
+  id: number;
+  name: string;
+  isOwner: boolean;
+  itemIds: number[];
+}

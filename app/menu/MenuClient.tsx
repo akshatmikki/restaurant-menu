@@ -1,22 +1,46 @@
 "use client";
 
-import { useState } from "react";
-import type { Booking, MenuCategory, MenuItem, MenuItemType, ExistingOrder } from "../lib/types";
-import { submitOrder } from "../lib/actions";
+import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
+import type {
+  Booking,
+  MenuCategory,
+  MenuItem,
+  MenuItemType,
+  ExistingOrder,
+  GuestRegistration,
+} from "../lib/types";
+import {
+  registerGuest,
+  saveMyMenuSelection,
+  loadMyMenuSelection,
+  loadPartySelections,
+  confirmPartyOrder,
+} from "../lib/actions";
 
 interface Props {
   booking: Booking;
   menuCategories: MenuCategory[];
   menuName: string | null;
   existingOrder: ExistingOrder | null;
+  registrationCount: number;
+  registrations: GuestRegistration[];
 }
 
-interface GuestInfo {
+interface MyReg {
+  id: number;
   name: string;
-  email: string;
-  phone: string;
-  showExtra: boolean;
+  isOwner: boolean;
 }
+
+type PartyEntry = { id: number; name: string; isOwner: boolean; itemIds: number[] };
+
+type Phase =
+  | "loading"
+  | "register"
+  | "party_full"
+  | "my_menu"
+  | "party_view";
 
 const TYPE_STYLES: Record<MenuItemType, { label: string; cls: string }> = {
   Veg:       { label: "Veg",     cls: "text-emerald-400 border-emerald-400/50" },
@@ -24,635 +48,681 @@ const TYPE_STYLES: Record<MenuItemType, { label: string; cls: string }> = {
   "Non-Veg": { label: "Non-Veg", cls: "text-rose-400 border-rose-400/50" },
 };
 
-type OrderState = Record<string, number[]>;
-
-function firstWord(name: string) {
-  return name.split(" ")[0] || name;
-}
-
 function formatDate(dateStr: string) {
   const d = new Date(dateStr + "T00:00:00");
   return d.toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-export default function MenuClient({ booking, menuCategories, menuName, existingOrder }: Props) {
-  const MENU_NAME = menuName ?? "Menu";
-  const guestCount = booking.party_size;
-
-  const [phase, setPhase] = useState<"names" | "menu">("names");
-
-  const [guestInfos, setGuestInfos] = useState<GuestInfo[]>(() =>
-    Array.from({ length: guestCount }, (_, i) => ({
-      name:
-        i === 0
-          ? [booking.guest.first_name, booking.guest.last_name].filter(Boolean).join(" ")
-          : "",
-      email: "",
-      phone: "",
-      showExtra: false,
-    })),
-  );
-
-  const [order, setOrder] = useState<OrderState>({});
-  const [summaryOpen, setSummaryOpen] = useState(false);
-  const [saved, setSaved] = useState(false);
-  const [orderId, setOrderId] = useState<number | null>(null);
-  const [submitting, setSubmitting] = useState(false);
-  const [submitError, setSubmitError] = useState<string | null>(null);
-
-  async function handleConfirm() {
-    setSubmitting(true);
-    setSubmitError(null);
-    try {
-      const items = guestSummaries.flatMap(({ guestNum, name, items }) =>
-        items.map((item) => ({
-          menuItemId: item.id,
-          guestNumber: guestNum,
-          guestName: name,
-        })),
-      );
-      const result = await submitOrder(booking.id, guestInfos, items);
-      setOrderId(result.orderId);
-      setSaved(true);
-      setSummaryOpen(false);
-    } catch {
-      setSubmitError("Failed to confirm order. Please try again.");
-    } finally {
-      setSubmitting(false);
-    }
-  }
-
-  const resolvedNames = guestInfos.map((g, i) => g.name.trim() || `Guest ${i + 1}`);
-
-  const guestLabel = [booking.guest.first_name, booking.guest.last_name]
-    .filter(Boolean)
-    .join(" ");
-
-  const canProceed = guestInfos.every((g) => g.name.trim().length > 0);
-
-  function updateGuest(i: number, field: keyof Omit<GuestInfo, "showExtra">, value: string) {
-    setGuestInfos((prev) => prev.map((g, j) => (j === i ? { ...g, [field]: value } : g)));
-  }
-
-  function toggleExtra(i: number) {
-    setGuestInfos((prev) => prev.map((g, j) => (j === i ? { ...g, showExtra: !g.showExtra } : g)));
-  }
-
-  function toggleGuestItem(itemId: string, guestNum: number) {
-    if (saved) return;
-    setOrder((prev) => {
-      const cur = prev[itemId] ?? [];
-      const has = cur.includes(guestNum);
-      return {
-        ...prev,
-        [itemId]: has
-          ? cur.filter((g) => g !== guestNum)
-          : [...cur, guestNum].sort((a, b) => a - b),
-      };
-    });
-  }
-
-  const allItems = menuCategories.flatMap((c) => c.items);
-
-  const guestSummaries = resolvedNames.map((name, idx) => {
-    const guestNum = idx + 1;
-    const items: MenuItem[] = [];
-    for (const item of allItems) {
-      if ((order[String(item.id)] ?? []).includes(guestNum)) items.push(item);
-    }
-    const total = items.reduce((s, i) => s + parseFloat(i.price), 0);
-    return { guestNum, name, items, total };
-  });
-
-  const tableTotal = guestSummaries.reduce((s, g) => s + g.total, 0);
-  const hasAnySelection = Object.values(order).some((g) => g.length > 0);
-
-  // ─── Existing confirmed order ─────────────────────────────────────────────
-
-  if (existingOrder) {
-    const existingTotal = existingOrder.guests.reduce(
-      (sum, g) => sum + g.items.reduce((s, i) => s + i.itemPrice, 0),
-      0,
-    );
-    const existingGuestLabel = existingOrder.primaryGuestName ?? booking.guest.first_name;
-    const currency = existingOrder.guests[0]?.items[0]?.itemCurrency;
-    const sym = currency === "GBP" ? "£" : "$";
-
-    return (
-      <div className="min-h-screen bg-navy text-cream">
-        <div className="sticky top-0 z-40 bg-emerald-800/95 border-b border-emerald-400/50 text-center py-3 px-4">
-          <p className="font-display tracking-[0.25em] text-emerald-200 text-sm">
-            ORDER CONFIRMED · #{existingOrder.orderId}
-          </p>
-        </div>
-
-        <div className="text-center pt-10 pb-6 px-4">
-          <div className="relative mx-auto w-14 h-14 flex items-center justify-center mb-4">
-            <div className="absolute inset-0 rounded-full border border-gold/40" />
-            <div className="absolute inset-1.5 rounded-full border border-gold/20" />
-            <span className="font-display text-gold text-xl font-light select-none">G</span>
-          </div>
-          <h2 className="font-display text-cream tracking-[0.35em] text-2xl font-light">
-            {MENU_NAME.toUpperCase()}
-          </h2>
-          <div className="flex items-center gap-3 justify-center mt-3">
-            <div className="h-px bg-gold/45 w-20" />
-            <div className="w-1 h-1 bg-gold/65 rotate-45" />
-            <div className="h-px bg-gold/45 w-20" />
-          </div>
-        </div>
-
-        <div className="max-w-2xl mx-auto px-4 pb-16">
-          <div className="border border-gold/30 bg-navy-light/70 p-6 mb-6 text-center">
-            <p className="text-gold/80 font-serif text-xs tracking-widest uppercase mb-1">
-              {existingOrder.bookingRef}
-            </p>
-            <p className="font-display text-cream text-2xl tracking-wide">{existingGuestLabel || "Guest"}</p>
-            <p className="text-cream/70 font-serif text-base mt-1">Party of {existingOrder.partySize}</p>
-            {existingOrder.bookingDate && (
-              <p className="text-cream/55 font-serif text-sm mt-0.5">
-                {formatDate(existingOrder.bookingDate)}
-                {existingOrder.bookingTime && ` at ${existingOrder.bookingTime}`}
-              </p>
-            )}
-          </div>
-
-          {existingOrder.guests.map((guest) => {
-            const subtotal = guest.items.reduce((s, i) => s + i.itemPrice, 0);
-            const guestSym = guest.items[0]?.itemCurrency === "GBP" ? "£" : "$";
-            return (
-              <div key={guest.guestNumber} className="mb-6 border border-gold/20 p-5">
-                <p className="font-display tracking-[0.2em] text-gold text-xs mb-4 uppercase">
-                  {guest.guestName}
-                </p>
-                {guest.items.map((item) => (
-                  <div key={item.menuItemId} className="flex justify-between items-baseline text-base font-serif py-1 border-b border-gold/10 last:border-0">
-                    <div className="min-w-0 mr-4">
-                      <span className="italic text-cream/85">{item.itemName}</span>
-                      {item.itemCategory && (
-                        <span className="text-cream/40 text-sm ml-2">· {item.itemCategory}</span>
-                      )}
-                    </div>
-                    <span className="text-gold/80 shrink-0">
-                      {item.itemCurrency === "GBP" ? "£" : "$"}{item.itemPrice.toFixed(2)}
-                    </span>
-                  </div>
-                ))}
-                <div className="flex justify-between text-sm font-serif pt-3 mt-1">
-                  <span className="text-cream/60 italic">Subtotal</span>
-                  <span className="text-gold">{guestSym}{subtotal.toFixed(2)}</span>
-                </div>
-              </div>
-            );
-          })}
-
-          <div className="border border-gold/30 p-5 flex justify-between items-center">
-            <span className="font-display tracking-[0.2em] text-cream text-sm">TABLE TOTAL</span>
-            <span className="font-display text-gold text-xl">{sym}{existingTotal.toFixed(2)}</span>
-          </div>
-
-          <p className="text-center text-cream/45 font-serif italic text-sm mt-8">
-            Your order has been confirmed and cannot be edited.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // ─── Phase: Guest name entry ──────────────────────────────────────────────
-
-  if (phase === "names") {
-    return (
-      <div className="min-h-screen bg-navy flex flex-col items-center justify-center p-6">
-        <div className="w-full max-w-md">
-
-          <div className="text-center mb-10">
-            <div className="relative mx-auto w-16 h-16 flex items-center justify-center mb-4">
-              <div className="absolute inset-0 rounded-full border border-gold/50" />
-              <div className="absolute inset-1.5 rounded-full border border-gold/30" />
-              <span className="font-display text-gold text-2xl font-light select-none">G</span>
-            </div>
-            <h1 className="font-display text-cream tracking-[0.3em] text-2xl font-light">
-              {MENU_NAME.toUpperCase()}
-            </h1>
-            <div className="flex items-center gap-3 justify-center mt-3">
-              <div className="h-px bg-gold/40 w-16" />
-              <div className="w-1 h-1 bg-gold/60 rotate-45" />
-              <div className="h-px bg-gold/40 w-16" />
-            </div>
-          </div>
-
-          <div className="border border-gold/30 bg-navy-light/70 p-6 mb-6">
-            <div className="text-center mb-5">
-              <p className="text-gold/80 font-serif text-xs tracking-widest uppercase mb-1">
-                {booking.booking_ref}
-              </p>
-              <p className="font-display text-cream text-2xl tracking-wide">{guestLabel || "Guest"}</p>
-              <p className="text-cream/70 font-serif text-base mt-1">
-                Party of {guestCount}
-                {booking.service.name ? ` · ${booking.service.name}` : ""}
-              </p>
-              {booking.booking_date && (
-                <p className="text-cream/55 font-serif text-sm mt-0.5">
-                  {formatDate(booking.booking_date)}
-                  {booking.booking_time && ` at ${booking.booking_time}`}
-                  {booking.tables.length > 0 && ` · Table ${booking.tables[0].name}`}
-                </p>
-              )}
-            </div>
-
-            <div className="h-px bg-gold/25 mb-5" />
-
-            <p className="text-center font-serif italic text-cream/65 text-base mb-6 leading-relaxed">
-              Please enter the names of each guest so we can personalise your order
-            </p>
-
-            <div className="space-y-6">
-              {guestInfos.map((guestInfo, i) => (
-                <div key={i} className="space-y-3">
-                  {/* Name row */}
-                  <div className="flex items-center gap-3">
-                    <div className="shrink-0 w-8 h-8 rounded-full border border-gold/50 flex items-center justify-center">
-                      <span className="font-display text-gold/80 text-xs">{i + 1}</span>
-                    </div>
-                    <div className="flex-1">
-                      <input
-                        type="text"
-                        value={guestInfo.name}
-                        onChange={(e) => updateGuest(i, "name", e.target.value)}
-                        placeholder="Guest name *"
-                        maxLength={40}
-                        className="
-                          w-full bg-transparent border-b border-gold/35
-                          text-cream placeholder:text-cream/40 py-2 font-serif text-base
-                          focus:outline-none focus:border-gold/80 transition-colors duration-200
-                        "
-                      />
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => toggleExtra(i)}
-                      title={guestInfo.showExtra ? "Hide details" : "Add email & phone"}
-                      className={`
-                        shrink-0 w-7 h-7 rounded-full border flex items-center justify-center
-                        font-display text-base leading-none transition-all duration-200
-                        ${guestInfo.showExtra
-                          ? "border-gold text-gold bg-gold/15 scale-110"
-                          : "border-gold/40 text-gold/60 hover:border-gold/70 hover:text-gold"
-                        }
-                      `}
-                    >
-                      {guestInfo.showExtra ? "×" : "+"}
-                    </button>
-                  </div>
-
-                  {/* Expanded: email + phone */}
-                  {guestInfo.showExtra && (
-                    <div className="ml-11 space-y-3">
-                      <input
-                        type="email"
-                        value={guestInfo.email}
-                        onChange={(e) => updateGuest(i, "email", e.target.value)}
-                        placeholder="Email address"
-                        maxLength={80}
-                        className="
-                          w-full bg-transparent border-b border-gold/25
-                          text-cream placeholder:text-cream/35 py-1.5 font-serif text-sm
-                          focus:outline-none focus:border-gold/60 transition-colors duration-200
-                        "
-                      />
-                      <input
-                        type="tel"
-                        value={guestInfo.phone}
-                        onChange={(e) => updateGuest(i, "phone", e.target.value)}
-                        placeholder="Phone number"
-                        maxLength={20}
-                        className="
-                          w-full bg-transparent border-b border-gold/25
-                          text-cream placeholder:text-cream/35 py-1.5 font-serif text-sm
-                          focus:outline-none focus:border-gold/60 transition-colors duration-200
-                        "
-                      />
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <button
-            type="button"
-            onClick={() => setPhase("menu")}
-            disabled={!canProceed}
-            className="
-              w-full bg-gold text-navy font-display tracking-[0.3em]
-              text-sm py-4 hover:bg-gold-light transition-colors duration-200 font-medium
-              disabled:opacity-40 disabled:cursor-not-allowed
-            "
-          >
-            PROCEED TO MENU
-          </button>
-
-          <p className="text-center text-cream/45 text-sm font-serif mt-4 italic">
-            * Name required · tap + to add email & phone
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  // ─── Phase: Menu ─────────────────────────────────────────────────────────
-
+function Logo({ small }: { small?: boolean }) {
+  const sz = small ? "w-12 h-12" : "w-16 h-16";
+  const txt = small ? "text-lg" : "text-2xl";
   return (
-    <div className="min-h-screen bg-navy text-cream">
-
-      {saved && (
-        <div className="sticky top-0 z-40 bg-emerald-800/95 border-b border-emerald-400/50 text-center py-3 px-4">
-          <p className="font-display tracking-[0.25em] text-emerald-200 text-sm">
-            ORDER CONFIRMED{orderId ? ` · #${orderId}` : ""} — No further changes can be made
-          </p>
-        </div>
-      )}
-
-      <header className={`sticky z-30 bg-navy/98 backdrop-blur-sm border-b border-gold/25 ${saved ? "top-[44px]" : "top-0"}`}>
-        <div className="flex items-center justify-between gap-4 px-4 py-3">
-          <div className="min-w-0">
-            {!saved && (
-              <button
-                type="button"
-                onClick={() => setPhase("names")}
-                className="text-gold/65 hover:text-gold text-xs font-display tracking-widest transition-colors block"
-              >
-                ← Edit Names
-              </button>
-            )}
-            <p className="font-display text-cream text-lg tracking-wide mt-0.5 truncate">
-              {guestLabel || "Guest"}
-              <span className="text-gold/70 ml-2 text-sm font-serif font-normal">· {booking.booking_ref}</span>
-            </p>
-            <p className="text-cream/60 font-serif text-sm">
-              {booking.service.name || MENU_NAME}
-              {booking.tables.length > 0 && ` · Table ${booking.tables[0].name}`}
-              {booking.booking_time && ` · ${booking.booking_time}`}
-            </p>
-          </div>
-          <div className="text-right shrink-0">
-            <p className="text-gold/60 text-xs font-serif">Table Total</p>
-            <p className="text-gold font-display text-xl">${tableTotal.toFixed(2)}</p>
-          </div>
-        </div>
-
-        <div className="flex gap-2 px-4 pb-3 overflow-x-auto scrollbar-hide">
-          {resolvedNames.map((name, i) => (
-            <span
-              key={i}
-              className="shrink-0 px-3 py-1 rounded-full border border-gold/40 text-gold/85 font-serif text-xs whitespace-nowrap"
-            >
-              {name}
-            </span>
-          ))}
-        </div>
-      </header>
-
-      <div className="text-center pt-10 pb-6 px-4">
-        <div className="relative mx-auto w-14 h-14 flex items-center justify-center mb-4">
-          <div className="absolute inset-0 rounded-full border border-gold/40" />
-          <div className="absolute inset-1.5 rounded-full border border-gold/20" />
-          <span className="font-display text-gold text-xl font-light select-none">G</span>
-        </div>
-        <h2 className="font-display text-cream tracking-[0.35em] text-2xl font-light">
-          {MENU_NAME.toUpperCase()}
-        </h2>
-        <div className="flex items-center gap-3 justify-center mt-3">
-          <div className="h-px bg-gold/45 w-20" />
-          <div className="w-1 h-1 bg-gold/65 rotate-45" />
-          <div className="h-px bg-gold/45 w-20" />
-        </div>
-        {!saved && (
-          <p className="mt-3 text-cream/60 font-serif italic text-base">
-            Tap a name below each dish to add it to that guest&apos;s order
-          </p>
-        )}
-      </div>
-
-      <main className="max-w-2xl mx-auto px-4 pb-52">
-        {menuCategories.map((cat) => (
-          <CategorySection
-            key={cat.id}
-            category={cat}
-            resolvedNames={resolvedNames}
-            order={order}
-            onToggle={toggleGuestItem}
-            saved={saved}
-          />
-        ))}
-
-        <div className="mt-10 border border-gold/25 p-6 text-center space-y-3">
-          <div className="flex flex-wrap justify-center gap-x-6 gap-y-1 text-base font-serif">
-            {(Object.entries(TYPE_STYLES) as [MenuItemType, { label: string; cls: string }][]).map(
-              ([key, { label, cls }]) => (
-                <span key={key} className={`${cls} font-medium`}>
-                  {label}
-                </span>
-              ),
-            )}
-          </div>
-          <div className="h-px bg-gold/20" />
-          <p className="text-cream/60 text-sm font-serif max-w-sm mx-auto leading-relaxed">
-            If you have any dietary requirements, please advise your server. We cannot 100% guarantee
-            that any dish is allergen free.
-          </p>
-        </div>
-      </main>
-
-      {(hasAnySelection || saved) && (
-        <div className="fixed bottom-0 left-0 right-0 z-30 bg-navy-light/98 backdrop-blur-sm border-t border-gold/30 shadow-2xl">
-          <button
-            type="button"
-            onClick={() => setSummaryOpen((v) => !v)}
-            className="w-full px-5 py-4 flex items-center justify-between hover:bg-navy-border/40 transition-colors"
-          >
-            <div className="flex items-center gap-3">
-              <span className="font-display tracking-[0.2em] text-gold text-sm">ORDER SUMMARY</span>
-              {saved && (
-                <span className="text-emerald-300 font-serif text-xs border border-emerald-400/50 px-2 py-0.5 rounded-full">
-                  Confirmed
-                </span>
-              )}
-            </div>
-            <div className="flex items-center gap-3 shrink-0">
-              <span className="font-display text-gold text-base">${tableTotal.toFixed(2)}</span>
-              <span className="text-gold/60 text-xs">{summaryOpen ? "▼" : "▲"}</span>
-            </div>
-          </button>
-
-          {summaryOpen && (
-            <div className="max-h-80 overflow-y-auto divide-y divide-gold/15 px-5 pb-6">
-              {guestSummaries.filter((g) => g.items.length > 0).map(({ guestNum, name, items, total }) => (
-                <div key={guestNum} className="py-4">
-                  <p className="font-display tracking-[0.15em] text-gold text-xs mb-3 uppercase">{name}</p>
-                  {items.map((item) => (
-                    <div key={item.id} className="flex justify-between items-baseline text-base font-serif py-0.5">
-                      <span className="italic text-cream/85 truncate mr-4">{item.name}</span>
-                      <span className="text-gold/80 shrink-0">${parseFloat(item.price).toFixed(2)}</span>
-                    </div>
-                  ))}
-                  <div className="flex justify-between text-sm font-serif pt-2 border-t border-gold/20 mt-2">
-                    <span className="text-cream/60 italic">Subtotal</span>
-                    <span className="text-gold">${total.toFixed(2)}</span>
-                  </div>
-                </div>
-              ))}
-
-              <div className="py-4 flex justify-between items-center">
-                <span className="font-display tracking-[0.2em] text-cream text-sm">TABLE TOTAL</span>
-                <span className="font-display text-gold text-xl">${tableTotal.toFixed(2)}</span>
-              </div>
-
-              {!saved && (
-                <div className="pt-2 pb-2">
-                  {submitError && (
-                    <p className="text-center text-rose-400 text-sm font-serif mb-3">{submitError}</p>
-                  )}
-                  <button
-                    type="button"
-                    onClick={handleConfirm}
-                    disabled={submitting}
-                    className="
-                      w-full bg-gold text-navy font-display tracking-[0.3em]
-                      text-sm py-3.5 hover:bg-gold-light transition-colors duration-200 font-medium
-                      disabled:opacity-50 disabled:cursor-not-allowed
-                    "
-                  >
-                    {submitting ? "CONFIRMING…" : "CONFIRM ORDER"}
-                  </button>
-                  <p className="text-center text-cream/50 text-sm font-serif mt-2 italic">
-                    Once confirmed, the order cannot be edited
-                  </p>
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      )}
+    <div className={`relative mx-auto ${sz} flex items-center justify-center mb-4`}>
+      <div className="absolute inset-0 rounded-full border border-gold/50" />
+      <div className="absolute inset-1.5 rounded-full border border-gold/30" />
+      <span className={`font-display text-gold ${txt} font-light select-none`}>G</span>
     </div>
   );
 }
 
-function CategorySection({
-  category,
-  resolvedNames,
-  order,
-  onToggle,
-  saved,
-}: {
-  category: MenuCategory;
-  resolvedNames: string[];
-  order: OrderState;
-  onToggle: (itemId: string, guestNum: number) => void;
-  saved: boolean;
-}) {
+function Divider() {
   return (
-    <section className="mb-12">
-      <div className="relative text-center my-10">
-        <div className="absolute inset-0 flex items-center" aria-hidden>
-          <div className="w-full border-t border-gold/25" />
-        </div>
-        <span className="relative bg-navy px-5 font-serif italic tracking-[0.18em] text-gold text-lg font-medium">
-          {category.name}
-        </span>
-      </div>
-
-      <div className="space-y-9">
-        {category.items.map((item) => (
-          <MenuItemCard
-            key={item.id}
-            item={item}
-            resolvedNames={resolvedNames}
-            selectedGuests={order[String(item.id)] ?? []}
-            onToggle={onToggle}
-            saved={saved}
-          />
-        ))}
-      </div>
-    </section>
+    <div className="flex items-center gap-3 justify-center mt-3">
+      <div className="h-px bg-gold/40 w-16" />
+      <div className="w-1 h-1 bg-gold/60 rotate-45" />
+      <div className="h-px bg-gold/40 w-16" />
+    </div>
   );
 }
 
-function MenuItemCard({
-  item,
-  resolvedNames,
-  selectedGuests,
-  onToggle,
-  saved,
-}: {
-  item: MenuItem;
-  resolvedNames: string[];
-  selectedGuests: number[];
-  onToggle: (itemId: string, guestNum: number) => void;
-  saved: boolean;
-}) {
-  const hasSelection = selectedGuests.length > 0;
-  const typeStyle = TYPE_STYLES[item.type];
+function PageShell({ children }: { children: ReactNode }) {
+  return (
+    <div className="min-h-screen bg-navy flex flex-col items-center justify-center p-6">
+      <div className="w-full max-w-md">{children}</div>
+    </div>
+  );
+}
+
+export default function MenuClient({
+  booking,
+  menuCategories,
+  menuName,
+  existingOrder,
+  registrationCount,
+  registrations,
+}: Props) {
+  const MENU_NAME = menuName ?? "Menu";
+  const guestCount = booking.party_size;
+  const LS_KEY = `booking_reg_${booking.booking_ref}`;
+  const router = useRouter();
+
+  const [phase, setPhase] = useState<Phase>("loading");
+  const [myReg, setMyReg] = useState<MyReg | null>(null);
+  const [regCount, setRegCount] = useState(registrationCount);
+
+  // Registration form
+  const [regName, setRegName] = useState("");
+  const [regPhone, setRegPhone] = useState("");
+  const [regEmail, setRegEmail] = useState("");
+  const [regSubmitting, setRegSubmitting] = useState(false);
+  const [regError, setRegError] = useState<string | null>(null);
+
+  // My menu selection
+  const [mySelection, setMySelection] = useState<Set<number>>(new Set());
+  const [selectionSaved, setSelectionSaved] = useState(false);
+  const [savingSelection, setSavingSelection] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const [summaryOpen, setSummaryOpen] = useState(false);
+
+  // Party view
+  const [partyEntries, setPartyEntries] = useState<PartyEntry[] | null>(null);
+  const [partyLoading, setPartyLoading] = useState(false);
+  const [confirmingOrder, setConfirmingOrder] = useState(false);
+  const [confirmError, setConfirmError] = useState<string | null>(null);
+  const [orderConfirmed, setOrderConfirmed] = useState(false);
+  const [confirmedOrderId, setConfirmedOrderId] = useState<number | null>(null);
+
+  // Item lookup map
+  const itemMap = useMemo(() => {
+    const map = new Map<number, MenuItem>();
+    for (const cat of menuCategories) {
+      for (const item of cat.items) map.set(item.id, item);
+    }
+    return map;
+  }, [menuCategories]);
+
+  useEffect(() => {
+    async function init() {
+      try {
+        const stored = localStorage.getItem(LS_KEY);
+        if (stored) {
+          const reg: MyReg = JSON.parse(stored);
+          setMyReg(reg);
+          const itemIds = await loadMyMenuSelection(reg.id);
+          setMySelection(new Set(itemIds));
+          setSelectionSaved(itemIds.length > 0);
+          setPhase("my_menu");
+          return;
+        }
+      } catch { /* ignore */ }
+      setPhase(registrationCount >= guestCount ? "party_full" : "register");
+    }
+    init();
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function handleRegister() {
+    if (!regName.trim() || !regPhone.trim()) return;
+    setRegSubmitting(true);
+    setRegError(null);
+    try {
+      const result = await registerGuest(
+        booking.id, regName, regPhone, regEmail || null,
+        booking.guest.phone || null, guestCount,
+      );
+      if (!result.success) {
+        if (result.error === "party_full") setPhase("party_full");
+        else if (result.error === "already_registered") setRegError("This phone number is already registered for this booking.");
+        else setRegError("Something went wrong. Please try again.");
+        return;
+      }
+      const reg: MyReg = { id: result.registrationId, name: regName.trim(), isOwner: result.isOwner };
+      localStorage.setItem(LS_KEY, JSON.stringify(reg));
+      setMyReg(reg);
+      setRegCount((c) => c + 1);
+      setPhase("my_menu");
+    } catch {
+      setRegError("Something went wrong. Please try again.");
+    } finally {
+      setRegSubmitting(false);
+    }
+  }
+
+  function toggleMyItem(itemId: number) {
+    setMySelection((prev) => {
+      const next = new Set(prev);
+      if (next.has(itemId)) next.delete(itemId);
+      else next.add(itemId);
+      return next;
+    });
+    setSelectionSaved(false);
+  }
+
+  async function handleSaveSelection() {
+    if (!myReg) return;
+    setSavingSelection(true);
+    setSaveError(null);
+    try {
+      await saveMyMenuSelection(myReg.id, Array.from(mySelection));
+      setSelectionSaved(true);
+      setSummaryOpen(false);
+    } catch {
+      setSaveError("Failed to save. Please try again.");
+    } finally {
+      setSavingSelection(false);
+    }
+  }
+
+  async function handleOpenPartyView() {
+    // Auto-save before viewing party
+    if (!selectionSaved && myReg) {
+      try {
+        await saveMyMenuSelection(myReg.id, Array.from(mySelection));
+        setSelectionSaved(true);
+      } catch { /* ignore, still open party view */ }
+    }
+    setPartyLoading(true);
+    setPhase("party_view");
+    setConfirmError(null);
+    try {
+      const entries = await loadPartySelections(booking.id);
+      setPartyEntries(entries);
+    } finally {
+      setPartyLoading(false);
+    }
+  }
+
+  async function handleConfirmPartyOrder() {
+    setConfirmingOrder(true);
+    setConfirmError(null);
+    try {
+      const result = await confirmPartyOrder(booking.id);
+      setConfirmedOrderId(result.orderId);
+      setOrderConfirmed(true);
+      router.refresh();
+    } catch {
+      setConfirmError("Failed to confirm order. Please try again.");
+    } finally {
+      setConfirmingOrder(false);
+    }
+  }
+
+  const mySelectedItems = useMemo(
+    () => Array.from(mySelection).map((id) => itemMap.get(id)).filter(Boolean) as MenuItem[],
+    [mySelection, itemMap],
+  );
+  const myTotal = mySelectedItems.reduce((s, item) => s + parseFloat(item.price), 0);
+  const sym = mySelectedItems[0]?.currency === "GBP" ? "£" : "$";
+
+  const guestLabel = [booking.guest.first_name, booking.guest.last_name].filter(Boolean).join(" ");
+
+  // ─── Existing confirmed order ─────────────────────────────────────────────
+
+  if (existingOrder || orderConfirmed) {
+    if (existingOrder) {
+      const existingTotal = existingOrder.guests.reduce(
+        (sum, g) => sum + g.items.reduce((s, i) => s + i.itemPrice, 0),
+        0,
+      );
+      const existingGuestLabel = existingOrder.primaryGuestName ?? booking.guest.first_name;
+      const currency = existingOrder.guests[0]?.items[0]?.itemCurrency;
+      const exSym = currency === "GBP" ? "£" : "$";
+      return (
+        <div className="min-h-screen bg-navy text-cream">
+          <div className="sticky top-0 z-40 bg-emerald-800/95 border-b border-emerald-400/50 text-center py-3 px-4">
+            <p className="font-display tracking-[0.25em] text-emerald-200 text-sm">
+              ORDER CONFIRMED · #{existingOrder.orderId}
+            </p>
+          </div>
+          <div className="text-center pt-10 pb-6 px-4">
+            <Logo small />
+            <h2 className="font-display text-cream tracking-[0.35em] text-2xl font-light">{MENU_NAME.toUpperCase()}</h2>
+            <div className="flex items-center gap-3 justify-center mt-3">
+              <div className="h-px bg-gold/45 w-20" /><div className="w-1 h-1 bg-gold/65 rotate-45" /><div className="h-px bg-gold/45 w-20" />
+            </div>
+          </div>
+          <div className="max-w-2xl mx-auto px-4 pb-16">
+            <div className="border border-gold/30 bg-navy-light/70 p-6 mb-6 text-center">
+              <p className="text-gold/80 font-serif text-xs tracking-widest uppercase mb-1">{existingOrder.bookingRef}</p>
+              <p className="font-display text-cream text-2xl tracking-wide">{existingGuestLabel || "Guest"}</p>
+              <p className="text-cream/70 font-serif text-base mt-1">Party of {existingOrder.partySize}</p>
+              {existingOrder.bookingDate && (
+                <p className="text-cream/55 font-serif text-sm mt-0.5">
+                  {formatDate(existingOrder.bookingDate)}{existingOrder.bookingTime && ` at ${existingOrder.bookingTime}`}
+                </p>
+              )}
+            </div>
+            {existingOrder.guests.map((guest) => {
+              const subtotal = guest.items.reduce((s, i) => s + i.itemPrice, 0);
+              const gSym = guest.items[0]?.itemCurrency === "GBP" ? "£" : "$";
+              return (
+                <div key={guest.guestNumber} className="mb-6 border border-gold/20 p-5">
+                  <p className="font-display tracking-[0.2em] text-gold text-xs mb-4 uppercase">{guest.guestName}</p>
+                  {guest.items.map((item) => (
+                    <div key={item.menuItemId} className="flex justify-between items-baseline text-base font-serif py-1 border-b border-gold/10 last:border-0">
+                      <span className="italic text-cream/85 mr-4">{item.itemName}</span>
+                      <span className="text-gold/80 shrink-0">{item.itemCurrency === "GBP" ? "£" : "$"}{item.itemPrice.toFixed(2)}</span>
+                    </div>
+                  ))}
+                  <div className="flex justify-between text-sm font-serif pt-3 mt-1">
+                    <span className="text-cream/60 italic">Subtotal</span>
+                    <span className="text-gold">{gSym}{subtotal.toFixed(2)}</span>
+                  </div>
+                </div>
+              );
+            })}
+            <div className="border border-gold/30 p-5 flex justify-between items-center">
+              <span className="font-display tracking-[0.2em] text-cream text-sm">TABLE TOTAL</span>
+              <span className="font-display text-gold text-xl">{exSym}{existingTotal.toFixed(2)}</span>
+            </div>
+            <p className="text-center text-cream/45 font-serif italic text-sm mt-8">Your order has been confirmed and cannot be edited.</p>
+          </div>
+        </div>
+      );
+    }
+
+    // orderConfirmed locally (no items, so existingOrder is null)
+    return (
+      <PageShell>
+        <div className="text-center mb-8">
+          <Logo />
+          <h1 className="font-display text-cream tracking-[0.3em] text-2xl font-light">{MENU_NAME.toUpperCase()}</h1>
+          <Divider />
+        </div>
+        <div className="border border-emerald-400/40 bg-navy-light/70 p-8 text-center">
+          <div className="w-12 h-12 rounded-full border border-emerald-400/60 flex items-center justify-center mx-auto mb-4">
+            <span className="text-emerald-400 text-xl">✓</span>
+          </div>
+          <p className="font-display text-cream text-xl tracking-wide mb-2">Party Order Confirmed!</p>
+          {confirmedOrderId && <p className="text-gold/70 font-serif text-sm mb-3">Order #{confirmedOrderId}</p>}
+          <p className="text-cream/65 font-serif text-sm leading-relaxed">The party order has been successfully confirmed.</p>
+        </div>
+      </PageShell>
+    );
+  }
+
+  // ─── Loading ──────────────────────────────────────────────────────────────
+
+  if (phase === "loading") {
+    return (
+      <div className="min-h-screen bg-navy flex items-center justify-center">
+        <div className="w-8 h-8 border-2 border-gold/30 border-t-gold rounded-full animate-spin" />
+      </div>
+    );
+  }
+
+  // ─── Party Full ───────────────────────────────────────────────────────────
+
+  if (phase === "party_full") {
+    return (
+      <PageShell>
+        <div className="text-center mb-10">
+          <Logo />
+          <h1 className="font-display text-cream tracking-[0.3em] text-2xl font-light">{MENU_NAME.toUpperCase()}</h1>
+          <Divider />
+        </div>
+        <div className="border border-gold/30 bg-navy-light/70 p-8 text-center">
+          <p className="text-gold/80 font-serif text-xs tracking-widest uppercase mb-3">{booking.booking_ref}</p>
+          <p className="font-display text-cream text-xl tracking-wide mb-3">Registration Closed</p>
+          <p className="text-cream/70 font-serif text-base leading-relaxed">All {guestCount} spots for this party have been filled.</p>
+        </div>
+      </PageShell>
+    );
+  }
+
+  // ─── Register ─────────────────────────────────────────────────────────────
+
+  if (phase === "register") {
+    return (
+      <PageShell>
+        <div className="text-center mb-10">
+          <Logo />
+          <h1 className="font-display text-cream tracking-[0.3em] text-2xl font-light">{MENU_NAME.toUpperCase()}</h1>
+          <Divider />
+        </div>
+
+        <div className="border border-gold/30 bg-navy-light/70 p-6 mb-6">
+          <div className="text-center mb-4">
+            <p className="text-gold/80 font-serif text-xs tracking-widest uppercase mb-1">{booking.booking_ref}</p>
+            <p className="font-display text-cream text-2xl tracking-wide">{guestLabel || MENU_NAME}</p>
+            <p className="text-cream/70 font-serif text-base mt-1">
+              Party of {guestCount}{booking.service.name ? ` · ${booking.service.name}` : ""}
+            </p>
+            {booking.booking_date && (
+              <p className="text-cream/55 font-serif text-sm mt-0.5">
+                {formatDate(booking.booking_date)}{booking.booking_time && ` at ${booking.booking_time}`}
+                {booking.tables.length > 0 && ` · Table ${booking.tables[0].name}`}
+              </p>
+            )}
+          </div>
+
+          <div className="h-px bg-gold/25 mb-4" />
+
+          <div className="flex gap-1 justify-center mb-4">
+            {Array.from({ length: guestCount }).map((_, i) => (
+              <div key={i} className={`h-1.5 flex-1 max-w-8 rounded-full ${i < regCount ? "bg-gold" : "bg-gold/20"}`} />
+            ))}
+          </div>
+          <p className="text-center text-cream/55 font-serif text-sm mb-5">{regCount} of {guestCount} guests registered</p>
+
+          <p className="text-center font-serif italic text-cream/65 text-base mb-5 leading-relaxed">
+            Register to select your menu choices
+          </p>
+
+          <div className="space-y-4">
+            <input
+              type="text"
+              value={regName}
+              onChange={(e) => setRegName(e.target.value)}
+              placeholder="Your full name *"
+              maxLength={60}
+              className="w-full bg-transparent border-b border-gold/35 text-cream placeholder:text-cream/40 py-2 font-serif text-base focus:outline-none focus:border-gold/80 transition-colors"
+            />
+            <input
+              type="tel"
+              value={regPhone}
+              onChange={(e) => setRegPhone(e.target.value)}
+              placeholder="Phone number *"
+              maxLength={20}
+              className="w-full bg-transparent border-b border-gold/35 text-cream placeholder:text-cream/40 py-2 font-serif text-base focus:outline-none focus:border-gold/80 transition-colors"
+            />
+            <input
+              type="email"
+              value={regEmail}
+              onChange={(e) => setRegEmail(e.target.value)}
+              placeholder="Email address (optional)"
+              maxLength={80}
+              className="w-full bg-transparent border-b border-gold/25 text-cream placeholder:text-cream/35 py-2 font-serif text-base focus:outline-none focus:border-gold/60 transition-colors"
+            />
+          </div>
+          {regError && <p className="text-rose-400 font-serif text-sm mt-3 text-center">{regError}</p>}
+        </div>
+
+        <button
+          type="button"
+          onClick={handleRegister}
+          disabled={!regName.trim() || !regPhone.trim() || regSubmitting}
+          className="w-full bg-gold text-navy font-display tracking-[0.3em] text-sm py-4 hover:bg-gold-light transition-colors font-medium disabled:opacity-40 disabled:cursor-not-allowed"
+        >
+          {regSubmitting ? "REGISTERING…" : "REGISTER & SELECT MENU"}
+        </button>
+        <p className="text-center text-cream/45 text-sm font-serif mt-4 italic">* Name and phone required</p>
+      </PageShell>
+    );
+  }
+
+  // ─── Party View (owner only) ───────────────────────────────────────────────
+
+  if (phase === "party_view") {
+    const partyTotal = (partyEntries ?? []).reduce(
+      (sum, g) => sum + g.itemIds.reduce((s, id) => s + (parseFloat(itemMap.get(id)?.price ?? "0")), 0),
+      0,
+    );
+    const partySym = sym;
+
+    return (
+      <div className="min-h-screen bg-navy text-cream">
+        <header className="sticky top-0 z-30 bg-navy/98 backdrop-blur-sm border-b border-gold/25">
+          <div className="flex items-center justify-between gap-4 px-4 py-3">
+            <div>
+              <button
+                type="button"
+                onClick={() => setPhase("my_menu")}
+                className="text-gold/65 hover:text-gold text-xs font-display tracking-widest transition-colors block"
+              >
+                ← MY SELECTION
+              </button>
+              <p className="font-display text-cream text-lg tracking-wide mt-0.5">PARTY OVERVIEW</p>
+              <p className="text-cream/60 font-serif text-sm">{booking.booking_ref} · Party of {guestCount}</p>
+            </div>
+            <div className="text-right shrink-0">
+              <p className="text-gold/60 text-xs font-serif">Table Total</p>
+              <p className="text-gold font-display text-xl">{partySym}{partyTotal.toFixed(2)}</p>
+            </div>
+          </div>
+        </header>
+
+        <div className="max-w-2xl mx-auto px-4 pt-8 pb-36">
+          {partyLoading ? (
+            <div className="flex justify-center py-20">
+              <div className="w-8 h-8 border-2 border-gold/30 border-t-gold rounded-full animate-spin" />
+            </div>
+          ) : (
+            <>
+              {(partyEntries ?? []).map((entry) => {
+                const items = entry.itemIds.map((id) => itemMap.get(id)).filter(Boolean) as MenuItem[];
+                const subtotal = items.reduce((s, item) => s + parseFloat(item.price), 0);
+                const entrySym = items[0]?.currency === "GBP" ? "£" : "$";
+                return (
+                  <div key={entry.id} className="mb-6 border border-gold/20 p-5">
+                    <div className="flex items-center justify-between mb-4">
+                      <div className="flex items-center gap-2">
+                        <p className="font-display tracking-[0.2em] text-gold text-sm uppercase">{entry.name}</p>
+                        {entry.isOwner && (
+                          <span className="text-[10px] border border-gold/40 text-gold/70 px-1.5 py-0.5 rounded font-serif">Host</span>
+                        )}
+                        {entry.id === myReg?.id && (
+                          <span className="text-[10px] border border-emerald-400/40 text-emerald-400/70 px-1.5 py-0.5 rounded font-serif">You</span>
+                        )}
+                      </div>
+                      <span className="text-gold/70 font-serif text-sm">{items.length} item{items.length !== 1 ? "s" : ""}</span>
+                    </div>
+                    {items.length === 0 ? (
+                      <p className="text-cream/40 font-serif italic text-sm">No items selected yet</p>
+                    ) : (
+                      <>
+                        {items.map((item) => (
+                          <div key={item.id} className="flex justify-between items-baseline text-base font-serif py-1 border-b border-gold/10 last:border-0">
+                            <span className="italic text-cream/85 mr-4 truncate">{item.name}</span>
+                            <span className="text-gold/80 shrink-0">{item.currency === "GBP" ? "£" : "$"}{parseFloat(item.price).toFixed(2)}</span>
+                          </div>
+                        ))}
+                        <div className="flex justify-between text-sm font-serif pt-3 mt-1">
+                          <span className="text-cream/60 italic">Subtotal</span>
+                          <span className="text-gold">{entrySym}{subtotal.toFixed(2)}</span>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+
+              {/* Unregistered slots */}
+              {Array.from({ length: Math.max(0, guestCount - (partyEntries?.length ?? 0)) }).map((_, i) => (
+                <div key={`empty-${i}`} className="mb-6 border border-gold/10 p-5 opacity-50">
+                  <p className="font-display tracking-[0.2em] text-gold/50 text-xs uppercase mb-2">
+                    Guest {(partyEntries?.length ?? 0) + i + 1}
+                  </p>
+                  <p className="text-cream/35 font-serif italic text-sm">Not yet registered</p>
+                </div>
+              ))}
+
+              <div className="border border-gold/30 p-5 flex justify-between items-center mb-2">
+                <span className="font-display tracking-[0.2em] text-cream text-sm">TABLE TOTAL</span>
+                <span className="font-display text-gold text-xl">{partySym}{partyTotal.toFixed(2)}</span>
+              </div>
+            </>
+          )}
+        </div>
+
+        <div className="fixed bottom-0 left-0 right-0 z-30 bg-navy-light/98 backdrop-blur-sm border-t border-gold/30 px-4 py-4">
+          {confirmError && <p className="text-rose-400 font-serif text-sm text-center mb-3">{confirmError}</p>}
+          <button
+            type="button"
+            onClick={handleConfirmPartyOrder}
+            disabled={confirmingOrder || partyLoading}
+            className="w-full bg-gold text-navy font-display tracking-[0.3em] text-sm py-4 hover:bg-gold-light transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            {confirmingOrder ? "CONFIRMING…" : "CONFIRM PARTY ORDER"}
+          </button>
+          <p className="text-center text-cream/40 text-xs font-serif mt-2 italic">Once confirmed, the order cannot be edited</p>
+        </div>
+      </div>
+    );
+  }
+
+  // ─── My Menu Selection ────────────────────────────────────────────────────
 
   return (
-    <div
-      className={`text-center transition-opacity duration-200 ${
-        hasSelection ? "opacity-100" : "opacity-85 hover:opacity-100"
-      }`}
-    >
-      <div className="flex flex-wrap items-baseline justify-center gap-x-2 gap-y-1 px-2">
-        <span className="font-serif italic text-cream text-lg leading-snug font-medium">{item.name}</span>
-        <span className="font-serif text-gold text-lg">${parseFloat(item.price).toFixed(2)}</span>
-        <span className={`text-[11px] border rounded-sm px-1.5 py-px font-serif leading-none ${typeStyle.cls}`}>
-          {typeStyle.label}
-        </span>
+    <div className="min-h-screen bg-navy text-cream">
+
+      <header className="sticky top-0 z-30 bg-navy/98 backdrop-blur-sm border-b border-gold/25">
+        <div className="flex items-center justify-between gap-4 px-4 py-3">
+          <div className="min-w-0">
+            <div className="flex items-center gap-2">
+              <p className="font-display text-cream text-lg tracking-wide truncate">{myReg?.name ?? guestLabel}</p>
+              {myReg?.isOwner && (
+                <span className="shrink-0 text-[10px] border border-gold/50 text-gold/70 px-1.5 py-0.5 rounded font-serif">Host</span>
+              )}
+            </div>
+            <p className="text-cream/60 font-serif text-sm">
+              {booking.booking_ref}
+              {booking.booking_time && ` · ${booking.booking_time}`}
+              {booking.tables.length > 0 && ` · Table ${booking.tables[0].name}`}
+            </p>
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            {myReg?.isOwner && (
+              <button
+                type="button"
+                onClick={handleOpenPartyView}
+                className="text-xs font-display tracking-widest text-gold/70 hover:text-gold border border-gold/30 hover:border-gold/60 px-3 py-1.5 transition-colors"
+              >
+                PARTY VIEW
+              </button>
+            )}
+            <div className="text-right">
+              <p className="text-gold/60 text-xs font-serif">My Total</p>
+              <p className="text-gold font-display text-lg">{sym}{myTotal.toFixed(2)}</p>
+            </div>
+          </div>
+        </div>
+      </header>
+
+      <div className="text-center pt-10 pb-6 px-4">
+        <Logo small />
+        <h2 className="font-display text-cream tracking-[0.35em] text-2xl font-light">{MENU_NAME.toUpperCase()}</h2>
+        <Divider />
+        <p className="mt-3 text-cream/60 font-serif italic text-base">
+          {selectionSaved
+            ? "Your selection is saved — tap items to update"
+            : "Tap dishes to add them to your order"}
+        </p>
       </div>
 
-      {item.description && (
-        <p className="text-cream/70 font-serif italic text-base mt-2 max-w-xs mx-auto leading-snug px-4">
-          {item.description}
-        </p>
-      )}
+      <main className="max-w-2xl mx-auto px-4 pb-48">
+        {menuCategories.map((cat) => (
+          <section key={cat.id} className="mb-12">
+            <div className="relative text-center my-10">
+              <div className="absolute inset-0 flex items-center" aria-hidden>
+                <div className="w-full border-t border-gold/25" />
+              </div>
+              <span className="relative bg-navy px-5 font-serif italic tracking-[0.18em] text-gold text-lg font-medium">
+                {cat.name}
+              </span>
+            </div>
+            <div className="space-y-9">
+              {cat.items.map((item) => {
+                const selected = mySelection.has(item.id);
+                const typeStyle = TYPE_STYLES[item.type];
+                return (
+                  <div key={item.id} className={`text-center transition-opacity duration-200 ${selected ? "opacity-100" : "opacity-80 hover:opacity-100"}`}>
+                    <div className="flex flex-wrap items-baseline justify-center gap-x-2 gap-y-1 px-2">
+                      <span className="font-serif italic text-cream text-lg leading-snug font-medium">{item.name}</span>
+                      <span className="font-serif text-gold text-lg">
+                        {item.currency === "GBP" ? "£" : "$"}{parseFloat(item.price).toFixed(2)}
+                      </span>
+                      <span className={`text-[11px] border rounded-sm px-1.5 py-px font-serif leading-none ${typeStyle.cls}`}>
+                        {typeStyle.label}
+                      </span>
+                    </div>
+                    {item.description && (
+                      <p className="text-cream/70 font-serif italic text-base mt-2 max-w-xs mx-auto leading-snug px-4">
+                        {item.description}
+                      </p>
+                    )}
+                    {item.allergens.length > 0 && (
+                      <div className="flex flex-wrap justify-center gap-1 mt-2">
+                        {item.allergens.map((a) => (
+                          <span key={a} className="text-[11px] border border-amber-400/40 text-amber-300/80 rounded-sm px-1.5 py-px font-serif leading-none">{a}</span>
+                        ))}
+                      </div>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => toggleMyItem(item.id)}
+                      className={`mt-4 px-5 py-1.5 rounded-full text-sm font-serif transition-all duration-200 ${
+                        selected
+                          ? "bg-gold text-navy font-semibold shadow-md shadow-gold/25 scale-105"
+                          : "border border-gold/40 text-gold/70 hover:border-gold/80 hover:text-gold"
+                      }`}
+                    >
+                      {selected ? "✓ Added" : "+ Add to My Order"}
+                    </button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))}
 
-      {item.allergens.length > 0 && (
-        <div className="flex flex-wrap justify-center gap-1 mt-2">
-          {item.allergens.map((a) => (
-            <span
-              key={a}
-              className="text-[11px] border border-amber-400/40 text-amber-300/80 rounded-sm px-1.5 py-px font-serif leading-none"
-            >
-              {a}
-            </span>
-          ))}
+        <div className="mt-10 border border-gold/25 p-6 text-center space-y-3">
+          <div className="flex flex-wrap justify-center gap-x-6 gap-y-1 text-base font-serif">
+            {(Object.entries(TYPE_STYLES) as [MenuItemType, { label: string; cls: string }][]).map(([key, { label, cls }]) => (
+              <span key={key} className={`${cls} font-medium`}>{label}</span>
+            ))}
+          </div>
+          <div className="h-px bg-gold/20" />
+          <p className="text-cream/60 text-sm font-serif max-w-sm mx-auto leading-relaxed">
+            If you have any dietary requirements, please advise your server. We cannot 100% guarantee that any dish is allergen free.
+          </p>
         </div>
-      )}
+      </main>
 
-      <div className="flex flex-wrap justify-center gap-2 mt-4">
-        {resolvedNames.map((name, idx) => {
-          const guestNum = idx + 1;
-          const selected = selectedGuests.includes(guestNum);
-          return (
+      {/* Sticky footer */}
+      <div className="fixed bottom-0 left-0 right-0 z-30 bg-navy-light/98 backdrop-blur-sm border-t border-gold/30 shadow-2xl">
+        <button
+          type="button"
+          onClick={() => setSummaryOpen((v) => !v)}
+          className="w-full px-5 py-4 flex items-center justify-between hover:bg-navy-border/40 transition-colors"
+        >
+          <div className="flex items-center gap-3">
+            <span className="font-display tracking-[0.2em] text-gold text-sm">MY SELECTION</span>
+            {selectionSaved && (
+              <span className="text-emerald-300 font-serif text-xs border border-emerald-400/50 px-2 py-0.5 rounded-full">Saved ✓</span>
+            )}
+            {!selectionSaved && mySelection.size > 0 && (
+              <span className="text-amber-300/80 font-serif text-xs border border-amber-400/40 px-2 py-0.5 rounded-full">Unsaved</span>
+            )}
+          </div>
+          <div className="flex items-center gap-3 shrink-0">
+            <span className="font-display text-gold text-base">{sym}{myTotal.toFixed(2)}</span>
+            <span className="text-gold/60 text-xs">{summaryOpen ? "▼" : "▲"}</span>
+          </div>
+        </button>
+
+        {summaryOpen && (
+          <div className="max-h-72 overflow-y-auto px-5 pb-4">
+            {mySelectedItems.length === 0 ? (
+              <p className="text-cream/50 font-serif italic text-sm text-center py-4">No items selected yet</p>
+            ) : (
+              <div className="divide-y divide-gold/15 mb-4">
+                {mySelectedItems.map((item) => (
+                  <div key={item.id} className="flex justify-between items-baseline text-base font-serif py-2">
+                    <span className="italic text-cream/85 truncate mr-4">{item.name}</span>
+                    <span className="text-gold/80 shrink-0">{item.currency === "GBP" ? "£" : "$"}{parseFloat(item.price).toFixed(2)}</span>
+                  </div>
+                ))}
+                <div className="flex justify-between text-sm font-serif pt-3">
+                  <span className="text-cream/60 italic">My Total</span>
+                  <span className="text-gold">{sym}{myTotal.toFixed(2)}</span>
+                </div>
+              </div>
+            )}
+            {saveError && <p className="text-rose-400 font-serif text-sm text-center mb-3">{saveError}</p>}
             <button
               type="button"
-              key={guestNum}
-              disabled={saved}
-              onClick={() => onToggle(String(item.id), guestNum)}
-              title={selected ? `Remove ${name}` : `Add for ${name}`}
-              className={`
-                px-4 py-1.5 rounded-full text-sm font-serif transition-all duration-200
-                ${saved ? "cursor-default" : ""}
-                ${
-                  selected
-                    ? "bg-gold text-navy font-semibold shadow-md shadow-gold/25 scale-105"
-                    : `border border-gold/40 text-gold/70 ${!saved ? "hover:border-gold/80 hover:text-gold" : "opacity-50"}`
-                }
-              `}
+              onClick={handleSaveSelection}
+              disabled={savingSelection || mySelection.size === 0}
+              className="w-full bg-gold text-navy font-display tracking-[0.3em] text-sm py-3.5 hover:bg-gold-light transition-colors font-medium disabled:opacity-40 disabled:cursor-not-allowed"
             >
-              {firstWord(name)}
+              {savingSelection ? "SAVING…" : selectionSaved ? "UPDATE SELECTION" : "SAVE MY SELECTION"}
             </button>
-          );
-        })}
+            <p className="text-center text-cream/40 text-xs font-serif mt-2 italic">
+              You can update your selection any time before the order is confirmed
+            </p>
+          </div>
+        )}
       </div>
     </div>
   );

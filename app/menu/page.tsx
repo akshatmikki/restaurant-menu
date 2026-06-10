@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
-import { findBooking, getMenuCategories, getFallbackMenuId, getMenuName, getExistingOrder } from "../lib/data";
-import type { Booking, MenuCategory, ExistingOrder } from "../lib/types";
+import { findBooking, getMenuCategories, getFallbackMenuId, getMenuName, getExistingOrder, getBookingRegistrations } from "../lib/data";
+import type { Booking, MenuCategory, ExistingOrder, GuestRegistration } from "../lib/types";
 import MenuClient from "./MenuClient";
 
 function fallbackBooking(id: string): Booking {
@@ -41,8 +41,27 @@ export default async function MenuPage({
     // treat as no existing order
   }
 
+  let registrationCount = 0;
+  let registrations: GuestRegistration[] = [];
+  try {
+    const regData = await getBookingRegistrations(booking.id);
+    registrationCount = regData.count;
+    registrations = regData.registrations;
+  } catch {
+    // treat as no registrations
+  }
+
   if (existingOrder) {
-    return <MenuClient booking={booking} menuCategories={[]} menuName={existingOrder.menuName} existingOrder={existingOrder} />;
+    return (
+      <MenuClient
+        booking={booking}
+        menuCategories={[]}
+        menuName={existingOrder.menuName}
+        existingOrder={existingOrder}
+        registrationCount={registrationCount}
+        registrations={registrations}
+      />
+    );
   }
 
   let menuCats: MenuCategory[] = [];
@@ -76,5 +95,14 @@ export default async function MenuPage({
     }
   }
 
-  return <MenuClient booking={booking} menuCategories={menuCats} menuName={menuName} existingOrder={null} />;
+  return (
+    <MenuClient
+      booking={booking}
+      menuCategories={menuCats}
+      menuName={menuName}
+      existingOrder={null}
+      registrationCount={registrationCount}
+      registrations={registrations}
+    />
+  );
 }

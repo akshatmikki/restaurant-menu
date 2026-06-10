@@ -2,6 +2,75 @@
 
 import pool from './db';
 
+export async function registerGuest(
+  bookingId: number,
+  name: string,
+  phone: string,
+  email: string | null,
+  ownerPhone: string | null,
+  partySize: number,
+): Promise<
+  | { success: true; registrationId: number; isOwner: boolean }
+  | { success: false; error: 'party_full' | 'already_registered' | 'error' }
+> {
+  const normalizedPhone = phone.replace(/[^\d+]/g, '');
+  if (!normalizedPhone) return { success: false, error: 'error' };
+
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS booking_registrations (
+        id           SERIAL PRIMARY KEY,
+        booking_id   INTEGER      NOT NULL,
+        name         VARCHAR(100) NOT NULL,
+        phone        VARCHAR(30)  NOT NULL,
+        email        VARCHAR(100),
+        is_owner     BOOLEAN      NOT NULL DEFAULT FALSE,
+        registered_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+      )
+    `);
+    await client.query(`
+      CREATE UNIQUE INDEX IF NOT EXISTS booking_reg_phone_idx
+      ON booking_registrations(booking_id, phone)
+    `);
+
+    await client.query('BEGIN');
+
+    const { rows: countRows } = await client.query<{ count: string }>(
+      `SELECT COUNT(*) AS count FROM booking_registrations WHERE booking_id = $1`,
+      [bookingId],
+    );
+    const currentCount = parseInt(countRows[0].count, 10);
+
+    if (currentCount >= partySize) {
+      await client.query('ROLLBACK');
+      return { success: false, error: 'party_full' };
+    }
+
+    const normalizedOwner = ownerPhone?.replace(/[^\d+]/g, '') ?? '';
+    const isOwner = Boolean(
+      (normalizedOwner && normalizedPhone === normalizedOwner) || currentCount === 0,
+    );
+
+    const { rows } = await client.query<{ id: number }>(
+      `INSERT INTO booking_registrations (booking_id, name, phone, email, is_owner)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [bookingId, name.trim(), normalizedPhone, email?.trim() || null, isOwner],
+    );
+
+    await client.query('COMMIT');
+    return { success: true, registrationId: rows[0].id, isOwner };
+  } catch (err: unknown) {
+    try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+    if ((err as { code?: string }).code === '23505') {
+      return { success: false, error: 'already_registered' };
+    }
+    return { success: false, error: 'error' };
+  } finally {
+    client.release();
+  }
+}
+
 interface GuestInput {
   name: string;
   email: string;
@@ -172,4 +241,124 @@ export async function submitOrder(
   } finally {
     client.release();
   }
+}
+
+export async function saveMyMenuSelection(
+  registrationId: number,
+  menuItemIds: number[],
+): Promise<void> {
+  const client = await pool.connect();
+  try {
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS registration_menu_selections (
+        registration_id INTEGER NOT NULL,
+        menu_item_id    INTEGER NOT NULL,
+        saved_at        TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (registration_id, menu_item_id)
+      )
+    `);
+    await client.query('BEGIN');
+    await client.query(
+      `DELETE FROM registration_menu_selections WHERE registration_id = $1`,
+      [registrationId],
+    );
+    if (menuItemIds.length > 0) {
+      const placeholders = menuItemIds.map((_, i) => `($1, $${i + 2})`).join(', ');
+      await client.query(
+        `INSERT INTO registration_menu_selections (registration_id, menu_item_id) VALUES ${placeholders}`,
+        [registrationId, ...menuItemIds],
+      );
+    }
+    await client.query('COMMIT');
+  } catch (err) {
+    try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+export async function loadMyMenuSelection(registrationId: number): Promise<number[]> {
+  try {
+    const { rows } = await pool.query<{ menu_item_id: number }>(
+      `SELECT menu_item_id FROM registration_menu_selections WHERE registration_id = $1`,
+      [registrationId],
+    );
+    return rows.map((r) => r.menu_item_id);
+  } catch {
+    return [];
+  }
+}
+
+export async function loadPartySelections(bookingId: number): Promise<
+  Array<{ id: number; name: string; isOwner: boolean; itemIds: number[] }>
+> {
+  try {
+    const { rows } = await pool.query<{
+      id: number;
+      name: string;
+      is_owner: boolean;
+      item_ids: number[] | null;
+    }>(
+      `SELECT
+         br.id, br.name, br.is_owner,
+         ARRAY_AGG(rms.menu_item_id ORDER BY rms.menu_item_id)
+           FILTER (WHERE rms.menu_item_id IS NOT NULL) AS item_ids
+       FROM booking_registrations br
+       LEFT JOIN registration_menu_selections rms ON rms.registration_id = br.id
+       WHERE br.booking_id = $1
+       GROUP BY br.id, br.name, br.is_owner
+       ORDER BY br.registered_at ASC`,
+      [bookingId],
+    );
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      isOwner: r.is_owner,
+      itemIds: r.item_ids ?? [],
+    }));
+  } catch {
+    return [];
+  }
+}
+
+export async function confirmPartyOrder(bookingId: number): Promise<{ orderId: number }> {
+  const { rows: regRows } = await pool.query<{
+    id: number; name: string; phone: string; email: string | null;
+  }>(
+    `SELECT id, name, phone, email FROM booking_registrations WHERE booking_id = $1 ORDER BY registered_at ASC`,
+    [bookingId],
+  );
+
+  const regIds = regRows.map((r) => r.id);
+  const selRows =
+    regIds.length > 0
+      ? (
+          await pool.query<{ registration_id: number; menu_item_id: number }>(
+            `SELECT registration_id, menu_item_id FROM registration_menu_selections WHERE registration_id = ANY($1)`,
+            [regIds],
+          )
+        ).rows
+      : [];
+
+  const selByReg = new Map<number, number[]>();
+  for (const row of selRows) {
+    if (!selByReg.has(row.registration_id)) selByReg.set(row.registration_id, []);
+    selByReg.get(row.registration_id)!.push(row.menu_item_id);
+  }
+
+  const guests: GuestInput[] = regRows.map((r) => ({
+    name: r.name,
+    email: r.email ?? '',
+    phone: r.phone,
+  }));
+  const items: OrderItemInput[] = regRows.flatMap((reg, i) =>
+    (selByReg.get(reg.id) ?? []).map((itemId) => ({
+      menuItemId: itemId,
+      guestNumber: i + 1,
+      guestName: reg.name,
+    })),
+  );
+
+  return submitOrder(bookingId, guests, items);
 }
