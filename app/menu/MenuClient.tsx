@@ -101,10 +101,9 @@ export default function MenuClient({
   const [myReg, setMyReg] = useState<MyReg | null>(null);
   const [regCount, setRegCount] = useState(registrationCount);
 
-  // Registration form — pre-filled with host data from the booking
-  const hostName = [booking.guest.first_name, booking.guest.last_name].filter(Boolean).join(" ");
-  const [regName, setRegName] = useState(hostName);
-  const [regPhone, setRegPhone] = useState(booking.guest.phone ?? "");
+  // Registration form
+  const [regName, setRegName] = useState("");
+  const [regPhone, setRegPhone] = useState("");
   const [regEmail, setRegEmail] = useState("");
   const [regSubmitting, setRegSubmitting] = useState(false);
   const [regError, setRegError] = useState<string | null>(null);
