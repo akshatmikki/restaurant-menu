@@ -1,5 +1,6 @@
 import { redirect } from "next/navigation";
 import { findBooking, getMenuCategories, getFallbackMenuId, getMenuName, getExistingOrder, getBookingRegistrations } from "../lib/data";
+import { decryptBookingRef } from "../lib/crypto";
 import type { Booking, MenuCategory, ExistingOrder, GuestRegistration } from "../lib/types";
 import MenuClient from "./MenuClient";
 
@@ -27,11 +28,15 @@ export default async function MenuPage({
 
   if (!id) redirect("/");
 
+  // Attempt AES-256-GCM decryption first; fall back to raw value for
+  // backward-compat with any existing plaintext links.
+  const resolvedId = decryptBookingRef(id) ?? id;
+
   let booking: Booking;
   try {
-    booking = (await findBooking(id)) ?? fallbackBooking(id);
+    booking = (await findBooking(resolvedId)) ?? fallbackBooking(resolvedId);
   } catch {
-    booking = fallbackBooking(id);
+    booking = fallbackBooking(resolvedId);
   }
 
   let existingOrder: ExistingOrder | null = null;

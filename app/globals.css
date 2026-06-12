@@ -8,19 +8,69 @@
 }
 
 @theme {
-  --color-navy: #1c2d40;
-  --color-navy-light: #243650;
-  --color-navy-border: #2f4261;
-  --color-gold: #d8b870;
-  --color-gold-light: #ecd28e;
-  --color-gold-dim: #8a7040;
-  --color-cream: #faf7f0;
+  --color-void:        #060d1a;
+  --color-navy:        #0a1628;
+  --color-navy-light:  #0f2040;
+  --color-navy-border: #1a3055;
+  --color-gold:        #d8b870;
+  --color-gold-light:  #ecd28e;
+  --color-gold-dim:    #8a7040;
+  --color-cream:       #e8f4f8;
+  --color-cyber:       #22d3ee;
+  --color-cyber-dim:   #0891b2;
+  --color-neon:        #4ade80;
 }
 
 body {
-  background-color: var(--color-navy);
+  background-color: var(--color-void);
   color: var(--color-cream);
   font-family: var(--font-cormorant), Georgia, serif;
   font-size: 1.0625rem;
   font-weight: 500;
 }
+
+/* ── Futuristic animations ─────────────────────────────────────────── */
+
+@keyframes spin-slow {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes spin-slow-reverse {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(-360deg); }
+}
+
+@keyframes glow-breathe {
+  0%, 100% { opacity: 0.5; }
+  50%       { opacity: 1; }
+}
+
+@keyframes cyber-scan {
+  0%   { transform: translateY(-100%); opacity: 0; }
+  10%  { opacity: 0.6; }
+  90%  { opacity: 0.6; }
+  100% { transform: translateY(300%); opacity: 0; }
+}
+
+@keyframes data-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes neon-pulse {
+  0%, 100% { box-shadow: 0 0 8px rgba(34,211,238,0.4), 0 0 20px rgba(34,211,238,0.15); }
+  50%       { box-shadow: 0 0 18px rgba(34,211,238,0.7), 0 0 40px rgba(34,211,238,0.3); }
+}
+
+@keyframes neon-pulse-gold {
+  0%, 100% { box-shadow: 0 0 8px rgba(216,184,112,0.4); }
+  50%       { box-shadow: 0 0 20px rgba(216,184,112,0.7), 0 0 40px rgba(216,184,112,0.2); }
+}
+
+.animate-spin-slow         { animation: spin-slow 12s linear infinite; }
+.animate-spin-slow-reverse { animation: spin-slow-reverse 8s linear infinite; }
+.animate-glow-breathe      { animation: glow-breathe 2.5s ease-in-out infinite; }
+.animate-neon-pulse        { animation: neon-pulse 2.5s ease-in-out infinite; }
+.animate-neon-pulse-gold   { animation: neon-pulse-gold 3s ease-in-out infinite; }
+.animate-data-in           { animation: data-in 0.35s ease-out forwards; }
