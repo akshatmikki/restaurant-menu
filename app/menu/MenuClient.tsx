@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, type ReactNode } from "react";
+import { useState, useEffect, useMemo, useRef, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import type {
   Booking,
@@ -42,6 +42,115 @@ type Phase =
   | "party_full"
   | "my_menu"
   | "party_view";
+
+const COUNTRY_CODES = [
+  { code: "+44",  flag: "🇬🇧", name: "United Kingdom" },
+  { code: "+1",   flag: "🇺🇸", name: "United States" },
+  { code: "+91",  flag: "🇮🇳", name: "India" },
+  { code: "+353", flag: "🇮🇪", name: "Ireland" },
+  { code: "+61",  flag: "🇦🇺", name: "Australia" },
+  { code: "+64",  flag: "🇳🇿", name: "New Zealand" },
+  { code: "+33",  flag: "🇫🇷", name: "France" },
+  { code: "+49",  flag: "🇩🇪", name: "Germany" },
+  { code: "+34",  flag: "🇪🇸", name: "Spain" },
+  { code: "+39",  flag: "🇮🇹", name: "Italy" },
+  { code: "+31",  flag: "🇳🇱", name: "Netherlands" },
+  { code: "+32",  flag: "🇧🇪", name: "Belgium" },
+  { code: "+41",  flag: "🇨🇭", name: "Switzerland" },
+  { code: "+46",  flag: "🇸🇪", name: "Sweden" },
+  { code: "+47",  flag: "🇳🇴", name: "Norway" },
+  { code: "+45",  flag: "🇩🇰", name: "Denmark" },
+  { code: "+358", flag: "🇫🇮", name: "Finland" },
+  { code: "+48",  flag: "🇵🇱", name: "Poland" },
+  { code: "+351", flag: "🇵🇹", name: "Portugal" },
+  { code: "+30",  flag: "🇬🇷", name: "Greece" },
+  { code: "+971", flag: "🇦🇪", name: "UAE" },
+  { code: "+966", flag: "🇸🇦", name: "Saudi Arabia" },
+  { code: "+65",  flag: "🇸🇬", name: "Singapore" },
+  { code: "+852", flag: "🇭🇰", name: "Hong Kong" },
+  { code: "+27",  flag: "🇿🇦", name: "South Africa" },
+  { code: "+55",  flag: "🇧🇷", name: "Brazil" },
+  { code: "+86",  flag: "🇨🇳", name: "China" },
+  { code: "+81",  flag: "🇯🇵", name: "Japan" },
+  { code: "+82",  flag: "🇰🇷", name: "South Korea" },
+];
+
+function CountryCodeSelect({ value, onChange }: { value: string; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handleOutside(e: MouseEvent) {
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        setOpen(false);
+        setSearch("");
+      }
+    }
+    if (open) document.addEventListener("mousedown", handleOutside);
+    return () => document.removeEventListener("mousedown", handleOutside);
+  }, [open]);
+
+  const selected = COUNTRY_CODES.find((c) => c.code === value);
+  const filtered = search
+    ? COUNTRY_CODES.filter(
+        (c) =>
+          c.name.toLowerCase().includes(search.toLowerCase()) ||
+          c.code.includes(search),
+      )
+    : COUNTRY_CODES;
+
+  return (
+    <div ref={ref} className="relative shrink-0">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex items-center gap-1.5 py-2 pr-3 text-cream font-serif text-base focus:outline-none group"
+      >
+        <span className="text-lg leading-none">{selected?.flag}</span>
+        <span className="text-gold/90 tracking-wide">{value}</span>
+        <span className={`text-gold/40 text-[10px] transition-transform duration-200 ${open ? "rotate-180" : ""}`}>▼</span>
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-[calc(100%+4px)] z-50 w-60 bg-[#0d1829] border border-gold/40 shadow-2xl shadow-black/70">
+          <div className="flex items-center gap-2 px-3 py-2 border-b border-gold/20">
+            <span className="text-gold/40 text-xs">🔍</span>
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search country…"
+              autoFocus
+              className="flex-1 bg-transparent text-cream text-sm font-serif placeholder:text-cream/35 focus:outline-none"
+            />
+          </div>
+          <div className="max-h-52 overflow-y-auto">
+            {filtered.length === 0 && (
+              <p className="text-cream/40 font-serif italic text-sm text-center py-4">No results</p>
+            )}
+            {filtered.map((c) => (
+              <button
+                key={c.code}
+                type="button"
+                onClick={() => { onChange(c.code); setOpen(false); setSearch(""); }}
+                className={`w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-serif text-left transition-colors ${
+                  value === c.code
+                    ? "bg-gold/15 text-gold"
+                    : "text-cream/80 hover:bg-gold/8 hover:text-cream"
+                }`}
+              >
+                <span className="text-base leading-none shrink-0">{c.flag}</span>
+                <span className="flex-1 truncate">{c.name}</span>
+                <span className={`shrink-0 text-xs tabular-nums ${value === c.code ? "text-gold" : "text-gold/50"}`}>{c.code}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
 
 const TYPE_STYLES: Record<MenuItemType, { label: string; cls: string }> = {
   Veg:       { label: "Veg",     cls: "text-emerald-400 border-emerald-400/50" },
@@ -103,6 +212,7 @@ export default function MenuClient({
 
   // Registration form
   const [regName, setRegName] = useState("");
+  const [regCountryCode, setRegCountryCode] = useState("+44");
   const [regPhone, setRegPhone] = useState("");
   const [regEmail, setRegEmail] = useState("");
   const [regSubmitting, setRegSubmitting] = useState(false);
@@ -156,16 +266,17 @@ export default function MenuClient({
     if (!regName.trim() || !regPhone.trim()) return;
     setRegSubmitting(true);
     setRegError(null);
+    const fullPhone = regCountryCode + regPhone.trim();
     try {
       const result = await registerGuest(
-        booking.id, regName, regPhone, regEmail || null,
+        booking.id, regName, fullPhone, regEmail || null,
         booking.guest.phone || null, guestCount,
       );
       if (!result.success) {
         if (result.error === "party_full") setPhase("party_full");
         else if (result.error === "already_registered") {
           // Phone already registered (e.g. host switching devices) — restore session
-          const existing = await lookupGuestRegistration(booking.id, regPhone);
+          const existing = await lookupGuestRegistration(booking.id, fullPhone);
           if (existing) {
             const reg: MyReg = { id: existing.id, name: existing.name, isOwner: existing.isOwner };
             localStorage.setItem(LS_KEY, JSON.stringify(reg));
@@ -415,14 +526,18 @@ export default function MenuClient({
               maxLength={60}
               className="w-full bg-transparent border-b border-gold/35 text-cream placeholder:text-cream/40 py-2 font-serif text-base focus:outline-none focus:border-gold/80 transition-colors"
             />
-            <input
-              type="tel"
-              value={regPhone}
-              onChange={(e) => setRegPhone(e.target.value)}
-              placeholder="Phone number *"
-              maxLength={20}
-              className="w-full bg-transparent border-b border-gold/35 text-cream placeholder:text-cream/40 py-2 font-serif text-base focus:outline-none focus:border-gold/80 transition-colors"
-            />
+            <div className="flex items-end border-b border-gold/35 focus-within:border-gold/80 transition-colors">
+              <CountryCodeSelect value={regCountryCode} onChange={setRegCountryCode} />
+              <div className="w-px h-5 bg-gold/30 shrink-0 mb-2 mr-2" />
+              <input
+                type="tel"
+                value={regPhone}
+                onChange={(e) => setRegPhone(e.target.value)}
+                placeholder="Phone number *"
+                maxLength={15}
+                className="flex-1 bg-transparent text-cream placeholder:text-cream/40 py-2 font-serif text-base focus:outline-none"
+              />
+            </div>
             <input
               type="email"
               value={regEmail}
